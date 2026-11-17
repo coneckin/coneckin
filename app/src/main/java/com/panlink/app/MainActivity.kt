@@ -1,6 +1,7 @@
 package com.panlink.app
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -33,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -61,7 +63,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.panlink.app.ui.theme.PanLinkTheme
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -99,6 +103,7 @@ enum class StatusAction { NONE, PORTAL, WIFI }
 fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     val context = LocalContext.current
     val store = remember { AccountStore(context) }
+    val cache = remember { RemoteCache(context) }
     val portalLogin = remember { PortalLogin(context) }
     val scope = rememberCoroutineScope()
 
@@ -112,6 +117,25 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     var unknownHost by remember { mutableStateOf<String?>(null) }
     var lockEnabled by remember { mutableStateOf(AppLock.isEnabled(context)) }
     var settingsMessage by remember { mutableStateOf("") }
+
+    var directory by remember { mutableStateOf(cache.portals()) }
+    var remote by remember { mutableStateOf(cache.config()) }
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshNote by remember { mutableStateOf("") }
+
+    val appCode = remember { appVersionCode(context) }
+    val appName = remember { appVersionName(context) }
+    val r = remote
+    val updateAvailable = r?.latestCode?.let { it > appCode } == true
+    val unsupported = r != null && r.minSupportedCode > appCode
+    val updateText = when {
+        unsupported -> "Versi aplikasi ini sudah terlalu lama. Perbarui agar tetap berfungsi."
+        updateAvailable -> "Tersedia versi baru ${r?.latestVersion.orEmpty()}."
+        else -> null
+    }
+    val openUpdate = {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(APK_URL)))
+    }
 
     fun persist(newData: AppData) {
         store.save(newData)
@@ -200,6 +224,32 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
         }
     }
 
+    fun refreshRemote() {
+        if (refreshing || busy) return
+        refreshing = true
+        scope.launch {
+            val portals = withContext(Dispatchers.IO) { Api.fetchPortals() }
+            val config = withContext(Dispatchers.IO) { Api.fetchConfig() }
+            if (portals != null) {
+                directory = portals
+                cache.savePortals(portals)
+            }
+            if (config != null) {
+                remote = config
+                cache.saveConfig(config)
+            }
+            refreshNote = if (portals == null && config == null)
+                "Tidak bisa menghubungi server. Memakai data yang tersimpan."
+            else
+                "Data berhasil diperbarui."
+            refreshing = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (!autoLogin) refreshRemote()
+    }
+
     LaunchedEffect(autoLogin) {
         if (autoLogin) {
             onAutoLoginHandled()
@@ -213,6 +263,9 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             busy = busy,
             status = status,
             statusAction = statusAction,
+            announcement = r?.message.orEmpty(),
+            updateText = updateText,
+            onUpdate = { openUpdate() },
             onStatusAction = {
                 when (statusAction) {
                     StatusAction.PORTAL -> failedHost?.let {
@@ -248,6 +301,7 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
         Screen.ADD -> {
             BackHandler { screen = Screen.HOME }
             AddAccountScreen(
+                directory = directory,
                 onSave = { account, host ->
                     persist(
                         AppData(
@@ -267,7 +321,14 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             SettingsScreen(
                 lockEnabled = lockEnabled,
                 message = settingsMessage,
+                appVersion = appName,
+                latestVersion = r?.latestVersion,
+                updateAvailable = updateAvailable,
+                refreshing = refreshing,
+                refreshNote = refreshNote,
                 onToggleLock = { setLock(it) },
+                onRefresh = { refreshRemote() },
+                onUpdate = { openUpdate() },
                 onWifiSettings = {
                     context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
                 },
@@ -315,6 +376,30 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     }
 }
 
+@Composable
+private fun InfoBanner(
+    text: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {}
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            if (actionLabel != null) {
+                TextButton(onClick = onAction) { Text(actionLabel) }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -322,6 +407,9 @@ fun HomeScreen(
     busy: Boolean,
     status: String,
     statusAction: StatusAction,
+    announcement: String,
+    updateText: String?,
+    onUpdate: () -> Unit,
     onStatusAction: () -> Unit,
     onLogin: () -> Unit,
     onSelect: (String) -> Unit,
@@ -349,6 +437,13 @@ fun HomeScreen(
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (updateText != null) {
+                item { InfoBanner(updateText, "Unduh pembaruan", onUpdate) }
+            }
+            if (announcement.isNotBlank()) {
+                item { InfoBanner(announcement) }
+            }
+
             if (active == null) {
                 item { EmptyState(onAdd) }
             } else {
@@ -542,7 +637,14 @@ private fun AccountItem(
 fun SettingsScreen(
     lockEnabled: Boolean,
     message: String,
+    appVersion: String,
+    latestVersion: String?,
+    updateAvailable: Boolean,
+    refreshing: Boolean,
+    refreshNote: String,
     onToggleLock: (Boolean) -> Unit,
+    onRefresh: () -> Unit,
+    onUpdate: () -> Unit,
     onWifiSettings: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -561,7 +663,8 @@ fun SettingsScreen(
         Column(
             modifier = Modifier
                 .padding(padding)
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             OutlinedCard(
@@ -598,6 +701,42 @@ fun SettingsScreen(
             }
 
             OutlinedCard(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Versi dan pembaruan", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Versi terpasang: ${appVersion.ifEmpty { "-" }}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        if (latestVersion != null) "Versi terbaru: $latestVersion"
+                        else "Versi terbaru belum diketahui",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (refreshNote.isNotEmpty()) {
+                        Text(
+                            refreshNote,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row {
+                        TextButton(onClick = onRefresh, enabled = !refreshing) {
+                            Text(if (refreshing) "Memeriksa..." else "Cek pembaruan")
+                        }
+                        if (updateAvailable) {
+                            TextButton(onClick = onUpdate) { Text("Unduh") }
+                        }
+                    }
+                }
+            }
+
+            OutlinedCard(
                 onClick = onWifiSettings,
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -614,8 +753,9 @@ fun SettingsScreen(
             }
 
             Text(
-                "Username dan password disimpan terenkripsi hanya di HP ini dan tidak dikirim " +
-                        "ke server mana pun, selain ke halaman login portal yang terdaftar.",
+                "Username dan password disimpan terenkripsi hanya di HP ini dan tidak pernah " +
+                        "dikirim ke server PanLink. Aplikasi hanya mengambil daftar kampus dan " +
+                        "informasi versi dari server.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -626,16 +766,27 @@ fun SettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAccountScreen(
+    directory: List<DirectoryPortal>,
     onSave: (Account, String) -> Unit,
     onBack: () -> Unit
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    var host by rememberSaveable { mutableStateOf("ypbpi.hotspot") }
+    var host by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldShape = RoundedCornerShape(14.dp)
+
+    // Jika hanya ada satu kampus, langsung terpilih
+    LaunchedEffect(directory) {
+        if (host.isEmpty() && directory.size == 1) {
+            host = directory[0].host
+            if (name.isBlank()) name = directory[0].name
+        }
+    }
+    val selected = directory.firstOrNull { it.host == normalizeHost(host) }
 
     Scaffold(
         topBar = {
@@ -656,6 +807,26 @@ fun AddAccountScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            OutlinedButton(
+                onClick = { showPicker = true },
+                shape = fieldShape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                Text(selected?.name ?: "Pilih kampus")
+            }
+            OutlinedTextField(
+                value = host,
+                onValueChange = { host = it },
+                label = { Text("Alamat portal") },
+                supportingText = {
+                    Text("Terisi otomatis saat memilih kampus. Isi manual untuk jaringan lain.")
+                },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
@@ -687,15 +858,6 @@ fun AddAccountScreen(
             TextButton(onClick = { showPassword = !showPassword }) {
                 Text(if (showPassword) "Sembunyikan password" else "Tampilkan password")
             }
-            OutlinedTextField(
-                value = host,
-                onValueChange = { host = it },
-                label = { Text("Alamat portal") },
-                supportingText = { Text("Alamat halaman login WiFi, tanpa http://") },
-                singleLine = true,
-                shape = fieldShape,
-                modifier = Modifier.fillMaxWidth()
-            )
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
@@ -709,7 +871,7 @@ fun AddAccountScreen(
                             error = "Nama, username, dan password wajib diisi."
 
                         cleanHost == null ->
-                            error = "Alamat portal tidak valid."
+                            error = "Pilih kampus atau isi alamat portal yang valid."
 
                         else -> onSave(
                             Account(
@@ -730,5 +892,39 @@ fun AddAccountScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+    }
+
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text("Pilih kampus") },
+            text = {
+                LazyColumn {
+                    items(directory, key = { it.host }) { portal ->
+                        TextButton(
+                            onClick = {
+                                host = portal.host
+                                if (name.isBlank()) name = portal.name
+                                showPicker = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(portal.name)
+                                Text(
+                                    portal.host,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Tutup") }
+            }
+        )
     }
 }

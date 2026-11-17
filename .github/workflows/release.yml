@@ -25,6 +25,13 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Tentukan versi
+        id: tag
+        run: |
+          echo "tag=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          echo "VERSION_CODE=${{ github.run_number }}" >> $GITHUB_ENV
+          echo "VERSION_NAME=1.0.${{ github.run_number }}" >> $GITHUB_ENV
+
       - name: Decode keystore
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/panlink.jks
@@ -43,10 +50,6 @@ jobs:
         run: |
           cp app/build/outputs/apk/release/app-release.apk panlink.apk
           cp app/build/outputs/bundle/release/app-release.aab panlink.aab
-
-      - name: Buat tag otomatis
-        id: tag
-        run: echo "tag=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Buat Release
         uses: softprops/action-gh-release@v2
