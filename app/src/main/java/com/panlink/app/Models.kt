@@ -14,8 +14,13 @@ data class Portal(
 
 data class AppData(
     val accounts: List<Account> = emptyList(),
-    val portals: List<Portal> = emptyList()
-)
+    val portals: List<Portal> = emptyList(),
+    val activeAccountId: String? = null
+) {
+    /** Akun yang sedang dipilih. Jika belum ada pilihan, pakai akun pertama. */
+    fun activeAccount(): Account? =
+        accounts.firstOrNull { it.id == activeAccountId } ?: accounts.firstOrNull()
+}
 
 /**
  * Membersihkan alamat portal yang diketik pengguna.

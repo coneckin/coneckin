@@ -72,13 +72,20 @@ class PortalLogin(private val context: Context) {
             val redirectHost = redirect?.host?.lowercase()
             Log.d(TAG, "host redirect: $redirectHost")
 
-            val portal = if (redirectHost != null) {
-                data.portals.firstOrNull { it.host == redirectHost }
-                    ?: return LoginResult.UnknownPortal(redirectHost)
+            val active = data.activeAccount()
+            val candidates = if (redirectHost != null) {
+                data.portals.filter { it.host == redirectHost }
             } else {
-                data.portals.firstOrNull()
-                    ?: return LoginResult.Failed("Belum ada portal tersimpan.")
+                data.portals
             }
+            if (candidates.isEmpty()) {
+                return if (redirectHost != null) LoginResult.UnknownPortal(redirectHost)
+                else LoginResult.Failed("Belum ada portal tersimpan.")
+            }
+            // Utamakan akun yang dipilih pengguna. Jika portal ini bukan miliknya,
+            // pakai akun yang memiliki portal tersebut.
+            val portal = candidates.firstOrNull { it.accountId == active?.id }
+                ?: candidates.first()
             val account = data.accounts.firstOrNull { it.id == portal.accountId }
                 ?: return LoginResult.Failed("Akun untuk portal ini tidak ditemukan.")
             val host = portal.host

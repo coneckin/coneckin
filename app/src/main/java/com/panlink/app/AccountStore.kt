@@ -40,7 +40,11 @@ class AccountStore(context: Context) {
         data.portals.forEach {
             portals.put(JSONObject().put("host", it.host).put("accountId", it.accountId))
         }
-        return JSONObject().put("accounts", accounts).put("portals", portals).toString()
+        return JSONObject()
+            .put("accounts", accounts)
+            .put("portals", portals)
+            .put("activeAccountId", data.activeAccountId ?: "")
+            .toString()
     }
 
     private fun parse(json: String): AppData {
@@ -60,6 +64,7 @@ class AccountStore(context: Context) {
             val o = portArr.getJSONObject(i)
             Portal(host = o.getString("host"), accountId = o.getString("accountId"))
         }
-        return AppData(accounts, portals)
+        val active = root.optString("activeAccountId", "").ifEmpty { null }
+        return AppData(accounts, portals, active)
     }
 }

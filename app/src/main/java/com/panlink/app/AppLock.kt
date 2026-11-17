@@ -28,11 +28,12 @@ object AppLock {
     @Suppress("DEPRECATION")
     fun authenticate(
         context: Context,
+        title: String,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
         val builder = BiometricPrompt.Builder(context)
-            .setTitle("Verifikasi untuk login WiFi")
+            .setTitle(title)
             .setSubtitle("Gunakan sidik jari, PIN, atau pola layar kunci")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
