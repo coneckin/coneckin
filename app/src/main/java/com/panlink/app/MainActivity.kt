@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,16 +28,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -49,50 +53,123 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
+    private var autoLogin by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        autoLogin = intent?.getBooleanExtra(EXTRA_AUTO_LOGIN, false) == true
         setContent {
             PanLinkTheme {
-                PanLinkApp()
+                PanLinkApp(
+                    autoLogin = autoLogin,
+                    onAutoLoginHandled = { autoLogin = false }
+                )
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_AUTO_LOGIN, false)) autoLogin = true
+    }
+
+    companion object {
+        const val EXTRA_AUTO_LOGIN = "auto_login"
+    }
 }
 
-enum class Screen { HOME, ADD }
+enum class Screen { HOME, ADD, MANUAL }
 
 @Composable
-fun PanLinkApp() {
+fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     val context = LocalContext.current
     val store = remember { AccountStore(context) }
     val portalLogin = remember { PortalLogin(context) }
     val scope = rememberCoroutineScope()
+
     var data by remember { mutableStateOf(store.load()) }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+    var manualHost by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
+    var failedHost by remember { mutableStateOf<String?>(null) }
+    var unknownHost by remember { mutableStateOf<String?>(null) }
+    var lockEnabled by remember { mutableStateOf(AppLock.isEnabled(context)) }
+
+    fun startLogin(current: AppData) {
+        if (busy) return
+        busy = true
+        status = "Memulai..."
+        failedHost = null
+        scope.launch {
+            val result = try {
+                portalLogin.run(current) { status = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                LoginResult.Failed("Terjadi kesalahan: ${e.javaClass.simpleName}")
+            }
+            status = result.toText()
+            when (result) {
+                is LoginResult.UnknownPortal -> {
+                    val safe = normalizeHost(result.host)
+                    if (safe != null) unknownHost = safe
+                    else status = "Alamat portal yang terdeteksi tidak valid."
+                }
+
+                is LoginResult.Failed -> failedHost = result.portalHost
+                else -> {}
+            }
+            busy = false
+        }
+    }
+
+    fun requestLogin() {
+        if (busy) return
+        if (data.accounts.isEmpty()) {
+            status = "Belum ada akun. Tambahkan akun dulu."
+            return
+        }
+        if (lockEnabled && AppLock.isDeviceSecure(context)) {
+            AppLock.authenticate(
+                context,
+                onSuccess = { startLogin(data) },
+                onFailure = { status = it }
+            )
+        } else {
+            startLogin(data)
+        }
+    }
+
+    LaunchedEffect(autoLogin) {
+        if (autoLogin) {
+            onAutoLoginHandled()
+            requestLogin()
+        }
+    }
 
     when (screen) {
         Screen.HOME -> HomeScreen(
             data = data,
             busy = busy,
             status = status,
-            onLogin = {
-                if (!busy) {
-                    busy = true
-                    status = "Memulai..."
-                    scope.launch {
-                        val result = try {
-                            portalLogin.run(data) { status = it }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            LoginResult.Failed("Terjadi kesalahan: ${e.javaClass.simpleName}")
-                        }
-                        status = result.toText()
-                        busy = false
-                    }
+            failedHost = failedHost,
+            lockEnabled = lockEnabled,
+            onLogin = { requestLogin() },
+            onOpenPortal = {
+                failedHost?.let {
+                    manualHost = it
+                    screen = Screen.MANUAL
+                }
+            },
+            onToggleLock = { enable ->
+                if (enable && !AppLock.isDeviceSecure(context)) {
+                    status = "Atur PIN, pola, atau sidik jari di pengaturan HP dulu."
+                } else {
+                    AppLock.setEnabled(context, enable)
+                    lockEnabled = enable
                 }
             },
             onAdd = { screen = Screen.ADD },
@@ -122,6 +199,45 @@ fun PanLinkApp() {
                 onBack = { screen = Screen.HOME }
             )
         }
+
+        Screen.MANUAL -> ManualLoginScreen(
+            host = manualHost,
+            onClose = { screen = Screen.HOME }
+        )
+    }
+
+    // Konfirmasi portal baru
+    unknownHost?.let { host ->
+        AlertDialog(
+            onDismissRequest = { unknownHost = null },
+            title = { Text("Portal baru terdeteksi") },
+            text = {
+                Column {
+                    Text(
+                        "Jaringan ini memakai halaman login \"$host\". " +
+                                "Username dan password akan dikirim ke alamat tersebut. " +
+                                "Lanjutkan hanya jika Anda mempercayai jaringan ini."
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    data.accounts.forEach { account ->
+                        TextButton(onClick = {
+                            val newData = AppData(
+                                accounts = data.accounts,
+                                portals = data.portals + Portal(host, account.id)
+                            )
+                            store.save(newData)
+                            data = newData
+                            unknownHost = null
+                            startLogin(newData)
+                        }) { Text("Pakai ${account.name}") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { unknownHost = null }) { Text("Batal") }
+            }
+        )
     }
 }
 
@@ -131,7 +247,11 @@ fun HomeScreen(
     data: AppData,
     busy: Boolean,
     status: String,
+    failedHost: String?,
+    lockEnabled: Boolean,
     onLogin: () -> Unit,
+    onOpenPortal: () -> Unit,
+    onToggleLock: (Boolean) -> Unit,
     onAdd: () -> Unit,
     onDelete: (String) -> Unit
 ) {
@@ -170,7 +290,14 @@ fun HomeScreen(
             if (status.isNotEmpty()) {
                 item {
                     Card(Modifier.fillMaxWidth()) {
-                        Text(status, modifier = Modifier.padding(16.dp))
+                        Column(Modifier.padding(16.dp)) {
+                            Text(status)
+                            if (failedHost != null && !busy) {
+                                TextButton(onClick = onOpenPortal) {
+                                    Text("Buka halaman portal")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -202,6 +329,27 @@ fun HomeScreen(
             item {
                 Button(onClick = onAdd, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Text("Tambah Akun")
+                }
+            }
+
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Verifikasi sebelum login",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                "Minta PIN, pola, atau sidik jari sebelum login WiFi dijalankan.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Switch(checked = lockEnabled, onCheckedChange = onToggleLock)
+                    }
                 }
             }
 

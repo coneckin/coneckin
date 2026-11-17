@@ -29,7 +29,7 @@ sealed class LoginResult {
     object Success : LoginResult()
     object NoWifi : LoginResult()
     data class UnknownPortal(val host: String) : LoginResult()
-    data class Failed(val message: String) : LoginResult()
+    data class Failed(val message: String, val portalHost: String? = null) : LoginResult()
 }
 
 fun LoginResult.toText(): String = when (this) {
@@ -38,7 +38,7 @@ fun LoginResult.toText(): String = when (this) {
     LoginResult.NoWifi ->
         "HP belum tersambung ke WiFi. Sambungkan dulu lewat pengaturan WiFi."
     is LoginResult.UnknownPortal ->
-        "Portal \"${this.host}\" belum terdaftar. Tambahkan lewat Tambah Akun."
+        "Portal \"${this.host}\" belum terdaftar."
     is LoginResult.Failed -> this.message
 }
 
@@ -81,13 +81,14 @@ class PortalLogin(private val context: Context) {
             }
             val account = data.accounts.firstOrNull { it.id == portal.accountId }
                 ?: return LoginResult.Failed("Akun untuk portal ini tidak ditemukan.")
+            val host = portal.host
 
             val loginUrl =
                 if (redirect != null && redirect.protocol == "http") redirect.toString()
-                else "http://${portal.host}/login"
+                else "http://$host/login"
 
             onStatus("Membuka halaman login...")
-            val fill = fillAndSubmit(loginUrl, portal.host, account)
+            val fill = fillAndSubmit(loginUrl, host, account)
             Log.d(TAG, "hasil isi form: $fill")
 
             if (fill == "NO_PASSWORD_FIELD") {
@@ -95,11 +96,12 @@ class PortalLogin(private val context: Context) {
                 val again = withContext(Dispatchers.IO) { probe(network) }
                 if (again?.code == 204) return LoginResult.Success
                 return LoginResult.Failed(
-                    "Kolom login tidak ditemukan. Portal ini mungkin butuh langkah manual."
+                    "Kolom login tidak ditemukan. Portal ini mungkin butuh langkah manual.",
+                    host
                 )
             }
             if (fill != "CLICKED" && fill != "REQUESTED") {
-                return LoginResult.Failed(fillError(fill))
+                return LoginResult.Failed(fillError(fill), host)
             }
 
             onStatus("Memproses login...")
@@ -110,7 +112,8 @@ class PortalLogin(private val context: Context) {
                 if (p?.code == 204) return LoginResult.Success
             }
             return LoginResult.Failed(
-                "Login belum berhasil. Periksa username dan password, lalu coba lagi."
+                "Login belum berhasil. Periksa username dan password, atau buka halaman portal.",
+                host
             )
         } finally {
             webView?.let { runCatching { it.stopLoading(); it.destroy() } }

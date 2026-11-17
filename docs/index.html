@@ -3,34 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PanLink - Koneksi WiFi Otomatis</title>
+    <title>PanLink - Login WiFi Kampus Satu Ketukan</title>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 24px; line-height: 1.6; }
-        .btn { display: inline-block; padding: 14px 28px; background: #1a73e8; color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600; }
-        ol li { margin-bottom: 8px; }
+        :root {
+          --bg: #ffffff; --text: #1d2433; --muted: #5b6472;
+          --card: #f3f5f9; --accent: #1a73e8; --accent-text: #ffffff;
+        }
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --bg: #12151c; --text: #e8ebf2; --muted: #a3acbd;
+            --card: #1c212b; --accent: #6aa7ff; --accent-text: #0b1020;
+          }
+        }
+        * { box-sizing: border-box; }
+        body {
+          margin: 0; background: var(--bg); color: var(--text);
+          font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.65;
+        }
+        main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+        h1 { font-size: 2.4rem; margin: 0 0 8px; }
+        h2 { margin-top: 40px; font-size: 1.4rem; }
+        p.lead { font-size: 1.15rem; color: var(--muted); margin-top: 0; }
+        .btn {
+          display: inline-block; padding: 14px 28px; border-radius: 10px;
+          background: var(--accent); color: var(--accent-text);
+          text-decoration: none; font-weight: 700; margin: 8px 8px 8px 0;
+        }
+        .btn.secondary { background: var(--card); color: var(--text); }
+        .card { background: var(--card); border-radius: 12px; padding: 16px 20px; margin: 16px 0; }
+        ol li, ul li { margin-bottom: 8px; }
+        small, .muted { color: var(--muted); }
+        a { color: var(--accent); }
     </style>
 </head>
 <body>
-<h1>PanLink</h1>
-<p>Aplikasi Android untuk menyambungkan WiFi secara otomatis.</p>
+<main>
+    <h1>PanLink</h1>
+    <p class="lead">Login WiFi kampus dengan satu ketukan. Simpan username dan password sekali, lalu pindah ruangan tanpa mengetik ulang.</p>
 
-<p><a class="btn" href="https://github.com/panlink1/panlink.github.io/releases/latest/download/panlink.apk">Download APK</a></p>
+    <p>
+        <a class="btn" href="https://github.com/panlink1/panlink.github.io/releases/latest/download/panlink.apk">Download APK</a>
+        <a class="btn secondary" href="https://github.com/panlink1/panlink.github.io/releases">Semua rilis</a>
+    </p>
+    <p class="muted">Membutuhkan Android 10 atau lebih baru.</p>
 
-<h2>Cara Instalasi</h2>
-<ol>
-    <li>Unduh file APK dengan tombol di atas.</li>
-    <li>Buka file, lalu izinkan <em>Install dari sumber tidak dikenal</em> jika diminta.</li>
-    <li>Tekan <strong>Install</strong>.</li>
-</ol>
+    <h2>Cara instalasi</h2>
+    <ol>
+        <li>Unduh <code>panlink.apk</code> dengan tombol di atas.</li>
+        <li>Buka file yang diunduh. Jika diminta, izinkan <em>Install dari sumber tidak dikenal</em> untuk browser atau pengelola file Anda.</li>
+        <li>Jika muncul peringatan Play Protect, pilih <em>Install saja</em>. Aplikasi ini dibagikan di luar Play Store.</li>
+        <li>Ketuk <strong>Install</strong>, lalu buka PanLink.</li>
+    </ol>
 
-<h2>Cara Penggunaan</h2>
-<ol>
-    <li>Buka PanLink, lalu isi nama WiFi (SSID) dan password.</li>
-    <li>Tekan <strong>Simpan WiFi</strong>.</li>
-    <li>Tekan <strong>Sambungkan</strong> dan setujui notifikasi sistem yang muncul.</li>
-    <li>Selanjutnya HP akan tersambung otomatis saat WiFi terjangkau.</li>
-</ol>
+    <h2>Cara penggunaan</h2>
+    <ol>
+        <li>Sambungkan HP ke WiFi kampus lewat pengaturan WiFi seperti biasa.</li>
+        <li>Buka PanLink, ketuk <strong>Tambah Akun</strong>, lalu isi nama akun, username, dan password. Alamat portal sudah terisi untuk kampus ini.</li>
+        <li>Ketuk <strong>LOGIN WIFI</strong>. Aplikasi masuk ke portal di latar belakang.</li>
+        <li>Saat pindah ruangan, cukup buka PanLink dan ketuk <strong>LOGIN WIFI</strong> lagi. Satu akun berlaku untuk semua ruangan yang memakai portal yang sama.</li>
+    </ol>
 
-<p><a href="https://github.com/panlink1/panlink.github.io">Kode sumber di GitHub</a></p>
+    <div class="card">
+        <strong>Akses lebih cepat</strong>
+        <p>Tarik panel atas HP, ketuk ikon pensil, lalu seret tile <strong>Login WiFi</strong> ke panel. Satu ketukan membuka PanLink dan langsung login.</p>
+    </div>
+
+    <h2>Jika login otomatis gagal</h2>
+    <ul>
+        <li>Periksa username dan password pada akun yang tersimpan.</li>
+        <li>Ketuk <strong>Buka halaman portal</strong> untuk login manual, misalnya jika portal meminta langkah tambahan.</li>
+        <li>Jika HP bertanya soal WiFi tanpa internet, pilih <strong>Tetap terhubung</strong>.</li>
+    </ul>
+
+    <h2>Keamanan dan privasi</h2>
+    <ul>
+        <li>Username dan password disimpan terenkripsi di HP Anda dan tidak dikirim ke server mana pun.</li>
+        <li>Data hanya dikirim ke halaman login portal yang sudah Anda daftarkan.</li>
+        <li>Tidak ada sambungan otomatis. Login berjalan hanya saat Anda mengetuk tombol.</li>
+        <li>Anda bisa mengunci tombol login dengan PIN, pola, atau sidik jari lewat saklar di aplikasi.</li>
+        <li>PanLink hanya dipakai untuk akun milik Anda sendiri.</li>
+    </ul>
+
+    <h2>Kode sumber</h2>
+    <p><a href="https://github.com/panlink1/panlink.github.io">github.com/panlink1/panlink.github.io</a></p>
+</main>
 </body>
 </html>
