@@ -116,6 +116,7 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     var failedHost by remember { mutableStateOf<String?>(null) }
     var unknownHost by remember { mutableStateOf<String?>(null) }
     var lockEnabled by remember { mutableStateOf(AppLock.isEnabled(context)) }
+    var reportEnabled by remember { mutableStateOf(ReportSettings.isEnabled(context)) }
     var settingsMessage by remember { mutableStateOf("") }
 
     var directory by remember { mutableStateOf(cache.portals()) }
@@ -157,6 +158,14 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 LoginResult.Failed("Terjadi kesalahan: ${e.javaClass.simpleName}")
             }
             status = result.toText()
+            if (reportEnabled) {
+                Reporter.fromResult(result)?.let { (host, code) ->
+                    scope.launch {
+                        Reporter.enqueue(context, host, code)
+                        Reporter.flush(context)
+                    }
+                }
+            }
             when (result) {
                 is LoginResult.UnknownPortal -> {
                     val safe = normalizeHost(result.host)
@@ -242,6 +251,9 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 "Tidak bisa menghubungi server. Memakai data yang tersimpan."
             else
                 "Data berhasil diperbarui."
+            if (ReportSettings.isEnabled(context) && (portals != null || config != null)) {
+                Reporter.flush(context)
+            }
             refreshing = false
         }
     }
@@ -326,6 +338,18 @@ fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 updateAvailable = updateAvailable,
                 refreshing = refreshing,
                 refreshNote = refreshNote,
+                reportEnabled = reportEnabled,
+                onToggleReport = { enable ->
+                    ReportSettings.setEnabled(context, enable)
+                    reportEnabled = enable
+                    if (!enable) scope.launch { Reporter.clearPending(context) }
+                },
+                onTestReport = {
+                    scope.launch {
+                        Reporter.enqueue(context, "uji.hotspot", "OTHER")
+                        Reporter.flush(context)
+                    }
+                },
                 onToggleLock = { setLock(it) },
                 onRefresh = { refreshRemote() },
                 onUpdate = { openUpdate() },
@@ -635,6 +659,9 @@ private fun AccountItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    reportEnabled: Boolean,
+    onToggleReport: (Boolean) -> Unit,
+    onTestReport: () -> Unit,
     lockEnabled: Boolean,
     message: String,
     appVersion: String,
@@ -648,6 +675,10 @@ fun SettingsScreen(
     onWifiSettings: () -> Unit,
     onBack: () -> Unit
 ) {
+    var showSample by remember { mutableStateOf(false) }
+    var testSent by remember { mutableStateOf(false) }
+    val isDevBuild = appVersion.endsWith("-dev")
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -706,6 +737,46 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Kirim laporan masalah",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                "Saat login gagal, kirim kode kesalahan tanpa data pribadi " +
+                                        "untuk membantu perbaikan aplikasi. Bawaan mati.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = reportEnabled, onCheckedChange = onToggleReport)
+                    }
+                    TextButton(onClick = { showSample = true }) {
+                        Text("Lihat data yang dikirim")
+                    }
+                    if (reportEnabled && isDevBuild) {
+                        TextButton(onClick = {
+                            testSent = true
+                            onTestReport()
+                        }) { Text("Kirim laporan uji (khusus debug)") }
+                        if (testSent) {
+                            Text(
+                                "Laporan uji diantrekan. Cek di MongoDB Atlas.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            OutlinedCard(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp)) {
                     Text("Versi dan pembaruan", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -754,12 +825,42 @@ fun SettingsScreen(
 
             Text(
                 "Username dan password disimpan terenkripsi hanya di HP ini dan tidak pernah " +
-                        "dikirim ke server PanLink. Aplikasi hanya mengambil daftar kampus dan " +
-                        "informasi versi dari server.",
+                        "dikirim ke server PanLink. Server hanya dipakai untuk daftar kampus, " +
+                        "informasi versi, dan laporan masalah jika Anda mengaktifkannya.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(16.dp))
         }
+    }
+
+    if (showSample) {
+        AlertDialog(
+            onDismissRequest = { showSample = false },
+            title = { Text("Contoh data yang dikirim") },
+            text = {
+                Column {
+                    Text(
+                        "host: ypbpi.hotspot\n" +
+                                "code: NO_USER_FIELD\n" +
+                                "androidSdk: 34\n" +
+                                "appVersion: 1.0.12\n" +
+                                "appCode: 12\n" +
+                                "manufacturer: samsung"
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Tidak ada username, password, nama WiFi, nama akun, atau identitas " +
+                                "pengguna. Seperti server web pada umumnya, alamat IP permintaan " +
+                                "tercatat di log hosting. Laporan dihapus otomatis setelah 90 hari.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSample = false }) { Text("Tutup") }
+            }
+        )
     }
 }
 

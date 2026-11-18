@@ -29,7 +29,11 @@ sealed class LoginResult {
     object Success : LoginResult()
     object NoWifi : LoginResult()
     data class UnknownPortal(val host: String) : LoginResult()
-    data class Failed(val message: String, val portalHost: String? = null) : LoginResult()
+    data class Failed(
+        val message: String,
+        val portalHost: String? = null,
+        val code: String = "OTHER"
+    ) : LoginResult()
 }
 
 fun LoginResult.toText(): String = when (this) {
@@ -104,11 +108,12 @@ class PortalLogin(private val context: Context) {
                 if (again?.code == 204) return LoginResult.Success
                 return LoginResult.Failed(
                     "Kolom login tidak ditemukan. Portal ini mungkin butuh langkah manual.",
-                    host
+                    host,
+                    "NO_PASSWORD_FIELD"
                 )
             }
             if (fill != "CLICKED" && fill != "REQUESTED") {
-                return LoginResult.Failed(fillError(fill), host)
+                return LoginResult.Failed(fillError(fill), host, fillCode(fill))
             }
 
             onStatus("Memproses login...")
@@ -120,7 +125,8 @@ class PortalLogin(private val context: Context) {
             }
             return LoginResult.Failed(
                 "Login belum berhasil. Periksa username dan password, atau buka halaman portal.",
-                host
+                host,
+                "LOGIN_TIMEOUT"
             )
         } finally {
             webView?.let { runCatching { it.stopLoading(); it.destroy() } }
@@ -227,6 +233,14 @@ class PortalLogin(private val context: Context) {
         "NO_USER_FIELD", "NO_SUBMIT" ->
             "Bentuk halaman login tidak dikenali. Portal ini mungkin butuh langkah manual."
         else -> "Gagal mengisi form login ($code)."
+    }
+
+    // Hanya kode yang sudah ada di daftar server yang boleh dilaporkan.
+    private fun fillCode(code: String): String = when (code) {
+        "TIMEOUT", "LOAD_FAILED", "HOST_MISMATCH",
+        "NO_USER_FIELD", "NO_SUBMIT" -> code
+
+        else -> "OTHER"
     }
 
     companion object {
