@@ -48,15 +48,15 @@ jobs:
 
       - name: Rename artefak
         run: |
-          cp app/build/outputs/apk/release/app-release.apk panlink.apk
-          cp app/build/outputs/bundle/release/app-release.aab panlink.aab
+          cp app/build/outputs/apk/release/app-release.apk coneckin.apk
+          cp app/build/outputs/bundle/release/app-release.aab coneckin.aab
 
       - name: Buat Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: PanLink ${{ steps.tag.outputs.tag }}
+          name: Coneckin ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            panlink.apk
-            panlink.aab
+            coneckin.apk
+            coneckin.aab
