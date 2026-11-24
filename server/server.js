@@ -4,7 +4,7 @@ const express = require('express');
 const { MongoClient } = require('mongodb');
 
 const MONGODB_URI = process.env.MONGODB_URI;
-const DB_NAME = process.env.DB_NAME || 'panlink_db';
+const DB_NAME = process.env.DB_NAME || 'coneckin_db';
 const PORT = process.env.PORT || 3000;
 const BIND_IP = process.env.IP || process.env.HOST || '0.0.0.0';
 
