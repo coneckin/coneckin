@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -10,7 +10,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 object CryptoManager {
-    private const val KEY_ALIAS = "panlink_master_key"
+    private const val KEY_ALIAS = "coneckin_master_key"
+    private const val LEGACY_KEY_ALIAS = "panlink_master_key"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_SIZE = 12
     private const val TAG_BITS = 128
@@ -34,6 +35,16 @@ object CryptoManager {
                 .build()
         )
         return generator.generateKey()
+    }
+
+    /** Menghapus kunci dari versi sebelum penggantian nama. Aman dipanggil berulang. */
+    fun deleteLegacyKey() {
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (keyStore.containsAlias(LEGACY_KEY_ALIAS)) keyStore.deleteEntry(LEGACY_KEY_ALIAS)
+        } catch (e: Exception) {
+            // Tidak kritis: kunci lama hanya tidak terpakai.
+        }
     }
 
     fun encrypt(plain: String): String {

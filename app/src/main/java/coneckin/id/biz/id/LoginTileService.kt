@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.app.PendingIntent
 import android.content.Intent

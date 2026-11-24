@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.content.Intent
 import android.net.Uri
@@ -61,7 +61,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.panlink.app.ui.theme.PanLinkTheme
+import coneckin.id.biz.id.ui.theme.ConeckinTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,8 +76,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         autoLogin = intent?.getBooleanExtra(EXTRA_AUTO_LOGIN, false) == true
         setContent {
-            PanLinkTheme {
-                PanLinkApp(
+            ConeckinTheme {
+                ConeckinApp(
                     autoLogin = autoLogin,
                     onAutoLoginHandled = { autoLogin = false }
                 )
@@ -100,7 +100,7 @@ enum class Screen { HOME, ADD, SETTINGS, MANUAL }
 enum class StatusAction { NONE, PORTAL, WIFI }
 
 @Composable
-fun PanLinkApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
+fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     val context = LocalContext.current
     val store = remember { AccountStore(context) }
     val cache = remember { RemoteCache(context) }
@@ -447,7 +447,7 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("PanLink", fontWeight = FontWeight.SemiBold) },
+                title = { Text("Coneckin", fontWeight = FontWeight.SemiBold) },
                 actions = {
                     IconButton(onClick = onSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Pengaturan")
@@ -825,7 +825,7 @@ fun SettingsScreen(
 
             Text(
                 "Username dan password disimpan terenkripsi hanya di HP ini dan tidak pernah " +
-                        "dikirim ke server PanLink. Server hanya dipakai untuk daftar kampus, " +
+                        "dikirim ke server Coneckin. Server hanya dipakai untuk daftar kampus, " +
                         "informasi versi, dan laporan masalah jika Anda mengaktifkannya.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

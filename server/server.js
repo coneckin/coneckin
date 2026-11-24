@@ -8,9 +8,9 @@ const DB_NAME = process.env.DB_NAME || 'panlink_db';
 const PORT = process.env.PORT || 3000;
 const BIND_IP = process.env.IP || process.env.HOST || '0.0.0.0';
 
-const GITHUB_REPO = 'panlink1/panlink.github.io';
+const GITHUB_REPO = 'coneckin/coneckin';
 const DOWNLOAD_URL =
-  `https://github.com/${GITHUB_REPO}/releases/latest/download/panlink.apk`;
+  `https://github.com/${GITHUB_REPO}/releases/latest/download/coneckin.apk`;
 
 const MAX_REPORTS = 20000;
 const REPORT_TTL_SECONDS = 90 * 24 * 60 * 60;
@@ -84,7 +84,7 @@ async function latestRelease() {
     const res = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
       {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'panlink-api' },
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'coneckin-api' },
         signal: AbortSignal.timeout(5000)
       }
     );
@@ -139,7 +139,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '2kb' }));
 
 app.get('/', (req, res) => {
-  res.json({ name: 'PanLink API', ok: true });
+  res.json({ name: 'Coneckin API', ok: true });
 });
 
 app.get('/health', readLimiter, (req, res) => {
@@ -234,7 +234,7 @@ process.on('unhandledRejection', (err) => {
 });
 
 app.listen(PORT, BIND_IP, () => {
-  console.log(`PanLink API berjalan di ${BIND_IP}:${PORT}`);
+  console.log(`Coneckin API berjalan di ${BIND_IP}:${PORT}`);
   connectDb();
 });
 setInterval(connectDb, 30 * 1000);

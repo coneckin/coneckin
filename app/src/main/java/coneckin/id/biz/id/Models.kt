@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 data class Account(
     val id: String,

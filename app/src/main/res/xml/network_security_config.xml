@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Portal WiFi kampus umumnya memakai HTTP, jadi lalu lintas cleartext harus
+  diizinkan secara umum. Server Coneckin sendiri HARUS HTTPS: untuk domain di bawah
+  ini cleartext dilarang, sehingga laporan dan info versi tidak pernah lewat HTTP.
+  Jika domain API diganti (lihat API_BASE di Remote.kt), ganti juga di sini.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">alwaysdata.net</domain>
+    </domain-config>
+</network-security-config>

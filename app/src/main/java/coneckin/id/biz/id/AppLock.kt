@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.app.KeyguardManager
 import android.content.Context
@@ -8,7 +8,7 @@ import android.os.Build
 import android.os.CancellationSignal
 
 object AppLock {
-    private const val PREFS = "panlink_settings"
+    private const val PREFS = "coneckin_settings"
     private const val KEY = "require_auth"
 
     fun isEnabled(context: Context): Boolean =

@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.panlink.app"
+    namespace = "coneckin.id.biz.id"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.panlink.app"
+        applicationId = "coneckin.id.biz.id"
         minSdk = 29
         targetSdk = 37
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.content.Context
 import android.os.Build
@@ -12,7 +12,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object ReportSettings {
-    private const val PREFS = "panlink_settings"
+    private const val PREFS = "coneckin_settings"
     private const val KEY = "send_reports"
 
     fun isEnabled(context: Context): Boolean =
@@ -25,7 +25,7 @@ object ReportSettings {
 }
 
 object Reporter {
-    private const val PREFS = "panlink_reports"
+    private const val PREFS = "coneckin_reports"
     private const val KEY = "pending"
     private const val MAX_PENDING = 20
     private val mutex = Mutex()

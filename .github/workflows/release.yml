@@ -34,8 +34,8 @@ jobs:
 
       - name: Decode keystore
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/panlink.jks
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/panlink.jks" >> $GITHUB_ENV
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/coneckin.jks
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/coneckin.jks" >> $GITHUB_ENV
 
       - name: Build APK dan AAB
         env:

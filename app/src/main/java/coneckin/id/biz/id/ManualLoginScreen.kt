@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -113,6 +113,8 @@ fun ManualLoginScreen(host: String, onClose: () -> Unit) {
                             WebView(ctx).apply {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
+                                settings.allowFileAccess = false
+                                settings.allowContentAccess = false
                                 webViewClient = object : WebViewClient() {
                                     // Hanya boleh membuka alamat portal
                                     override fun shouldOverrideUrlLoading(

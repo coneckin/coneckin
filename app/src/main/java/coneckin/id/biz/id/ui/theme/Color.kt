@@ -1,4 +1,4 @@
-package com.panlink.app.ui.theme
+package coneckin.id.biz.id.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

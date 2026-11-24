@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -182,6 +182,8 @@ class PortalLogin(private val context: Context) {
         wv.settings.javaScriptEnabled = true
         wv.settings.domStorageEnabled = true
         wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
+        wv.settings.allowFileAccess = false
+        wv.settings.allowContentAccess = false
 
         val loaded = CompletableDeferred<Boolean>()
         wv.webViewClient = object : WebViewClient() {
@@ -244,7 +246,7 @@ class PortalLogin(private val context: Context) {
     }
 
     companion object {
-        private const val TAG = "PanLink"
+        private const val TAG = "Coneckin"
         private const val PROBE_URL = "http://connectivitycheck.gstatic.com/generate_204"
 
         // Mengisi kolom username dan password, lalu menekan tombol Login.

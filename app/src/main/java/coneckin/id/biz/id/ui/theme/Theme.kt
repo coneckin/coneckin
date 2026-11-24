@@ -1,4 +1,4 @@
-package com.panlink.app.ui.theme
+package coneckin.id.biz.id.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +40,7 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun PanLinkTheme(
+fun ConeckinTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {

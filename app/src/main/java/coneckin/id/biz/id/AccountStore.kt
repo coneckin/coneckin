@@ -1,15 +1,25 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
 class AccountStore(context: Context) {
-    private val prefs = context.getSharedPreferences("panlink_secure", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("coneckin_secure", Context.MODE_PRIVATE)
 
     init {
-        // Hapus data versi awal aplikasi yang tersimpan sebagai teks biasa
-        context.getSharedPreferences("panlink", Context.MODE_PRIVATE).edit().clear().apply()
+        // Bersihkan sisa versi lama (sebelum aplikasi diganti nama menjadi Coneckin):
+        // data teks biasa, data terenkripsi dengan kunci lama, dan kunci lamanya.
+        for (legacy in LEGACY_PREFS) {
+            context.getSharedPreferences(legacy, Context.MODE_PRIVATE).edit().clear().apply()
+        }
+        CryptoManager.deleteLegacyKey()
+    }
+
+    private companion object {
+        val LEGACY_PREFS = listOf(
+            "panlink", "panlink_secure", "panlink_settings", "panlink_reports", "panlink_cache"
+        )
     }
 
     fun load(): AppData {

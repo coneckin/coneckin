@@ -1,4 +1,4 @@
-package com.panlink.app
+package coneckin.id.biz.id
 
 import android.content.Context
 import org.json.JSONArray
@@ -10,7 +10,7 @@ const val API_BASE = "https://panlink.alwaysdata.net"
 
 // Tautan unduh ditulis tetap di aplikasi, tidak diambil dari server.
 const val APK_URL =
-    "https://github.com/panlink1/panlink.github.io/releases/latest/download/panlink.apk"
+    "https://github.com/coneckin/coneckin/releases/latest/download/coneckin.apk"
 
 data class DirectoryPortal(val name: String, val host: String)
 
@@ -87,7 +87,7 @@ object Api {
 }
 
 class RemoteCache(context: Context) {
-    private val prefs = context.getSharedPreferences("panlink_cache", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("coneckin_cache", Context.MODE_PRIVATE)
 
     fun portals(): List<DirectoryPortal> {
         val text = prefs.getString("portals", null) ?: return DEFAULT_DIRECTORY

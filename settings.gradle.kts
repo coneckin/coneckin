@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PanLink"
+rootProject.name = "Coneckin"
 include(":app")
