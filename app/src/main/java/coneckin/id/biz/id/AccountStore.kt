@@ -28,7 +28,7 @@ class AccountStore(context: Context) {
     fun save(data: AppData) = repository.save(data)
 }
 
-private class PrefsStore(private val prefs: SharedPreferences) : KeyValueStore {
+internal class PrefsStore(private val prefs: SharedPreferences) : KeyValueStore {
     override fun getString(key: String): String? = prefs.getString(key, null)
 
     override fun putString(key: String, value: String) {

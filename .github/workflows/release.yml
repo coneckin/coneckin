@@ -28,7 +28,7 @@ jobs:
       - name: Unit test dan coverage
         run: |
           chmod +x gradlew
-          ./gradlew testDebugUnitTest createDebugUnitTestCoverageReport
+          ./gradlew testDebugUnitTest createDebugUnitTestCoverageReport verifyLogicCoverage
 
       - name: Simpan laporan coverage
         if: always()

@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -96,7 +97,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Screen { HOME, ADD, SETTINGS, MANUAL }
+enum class Screen { HOME, ADD, EDIT, SETTINGS, MANUAL }
 enum class StatusAction { NONE, PORTAL, WIFI }
 
 @Composable
@@ -109,6 +110,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
 
     var data by remember { mutableStateOf(store.load()) }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+    var editingAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var manualHost by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
@@ -293,6 +295,10 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             },
             onLogin = { requestLogin() },
             onSelect = { id -> persist(data.copy(activeAccountId = id)) },
+            onEdit = { id ->
+                editingAccountId = id
+                screen = Screen.EDIT
+            },
             onDelete = { id ->
                 persist(data.withoutAccount(id))
             },
@@ -313,6 +319,35 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 },
                 onBack = { screen = Screen.HOME }
             )
+        }
+
+        Screen.EDIT -> {
+            BackHandler {
+                editingAccountId = null
+                screen = Screen.HOME
+            }
+            val target = data.accounts.firstOrNull { it.id == editingAccountId }
+            if (target == null) {
+                editingAccountId = null
+                screen = Screen.HOME
+            } else {
+                EditAccountScreen(
+                    account = target,
+                    initialHosts = data.portals.filter { it.accountId == target.id }.map { it.host },
+                    directory = directory,
+                    onSave = { name, username, password, hosts ->
+                        data.withUpdatedAccount(target.id, name, username, password, hosts)?.let {
+                            persist(it)
+                        }
+                        editingAccountId = null
+                        screen = Screen.HOME
+                    },
+                    onBack = {
+                        editingAccountId = null
+                        screen = Screen.HOME
+                    }
+                )
+            }
         }
 
         Screen.SETTINGS -> {
@@ -424,6 +459,7 @@ fun HomeScreen(
     onStatusAction: () -> Unit,
     onLogin: () -> Unit,
     onSelect: (String) -> Unit,
+    onEdit: (String) -> Unit,
     onDelete: (String) -> Unit,
     onAdd: () -> Unit,
     onSettings: () -> Unit
@@ -488,6 +524,7 @@ fun HomeScreen(
                         selected = account.id == active?.id,
                         enabled = !busy,
                         onSelect = { onSelect(account.id) },
+                        onEdit = { onEdit(account.id) },
                         onDelete = { pendingDelete = account }
                     )
                 }
@@ -605,6 +642,7 @@ private fun AccountItem(
     selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
+    onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     OutlinedCard(
@@ -635,6 +673,9 @@ private fun AccountItem(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            IconButton(onClick = onEdit, enabled = enabled) {
+                Icon(Icons.Default.Edit, contentDescription = "Ubah akun")
             }
             IconButton(onClick = onDelete, enabled = enabled) {
                 Icon(Icons.Default.Delete, contentDescription = "Hapus akun")
@@ -953,22 +994,21 @@ fun AddAccountScreen(
 
             Button(
                 onClick = {
-                    val cleanHost = normalizeHost(host)
-                    when {
-                        name.isBlank() || username.isBlank() || password.isEmpty() ->
+                    when (val check = checkAccountInput(name, username, password, host)) {
+                        InputCheck.MissingFields ->
                             error = "Nama, username, dan password wajib diisi."
 
-                        cleanHost == null ->
+                        InputCheck.InvalidHost ->
                             error = "Pilih kampus atau isi alamat portal yang valid."
 
-                        else -> onSave(
+                        is InputCheck.Valid -> onSave(
                             Account(
                                 id = UUID.randomUUID().toString(),
-                                name = name.trim(),
-                                username = username.trim(),
-                                password = password
+                                name = check.name,
+                                username = check.username,
+                                password = check.password
                             ),
-                            cleanHost
+                            check.host
                         )
                     }
                 },
@@ -993,6 +1033,170 @@ fun AddAccountScreen(
                             onClick = {
                                 host = portal.host
                                 if (name.isBlank()) name = portal.name
+                                showPicker = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(portal.name)
+                                Text(
+                                    portal.host,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Tutup") }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditAccountScreen(
+    account: Account,
+    initialHosts: List<String>,
+    directory: List<DirectoryPortal>,
+    onSave: (name: String, username: String, password: String, hosts: List<String>) -> Unit,
+    onBack: () -> Unit
+) {
+    var name by rememberSaveable(account.id) { mutableStateOf(account.name) }
+    var username by rememberSaveable(account.id) { mutableStateOf(account.username) }
+    var password by rememberSaveable(account.id) { mutableStateOf(account.password) }
+    var hostsText by rememberSaveable(account.id) {
+        mutableStateOf(initialHosts.joinToString(", "))
+    }
+    var showPassword by rememberSaveable(account.id) { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val fieldShape = RoundedCornerShape(14.dp)
+
+    val parsedHosts = parseHostList(hostsText).orEmpty()
+    val selected = directory.firstOrNull { it.host in parsedHosts }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Ubah akun") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedButton(
+                onClick = { showPicker = true },
+                shape = fieldShape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) {
+                Text(selected?.name ?: "Pilih kampus")
+            }
+            OutlinedTextField(
+                value = hostsText,
+                onValueChange = { hostsText = it },
+                label = { Text("Alamat portal") },
+                supportingText = {
+                    Text("Pisahkan dengan koma jika akun ini dipakai di lebih dari satu portal.")
+                },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Nama akun") },
+                supportingText = { Text("Nama bebas untuk membedakan akun") },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Username") },
+                singleLine = true,
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                visualTransformation = if (showPassword)
+                    VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                shape = fieldShape,
+                modifier = Modifier.fillMaxWidth()
+            )
+            TextButton(onClick = { showPassword = !showPassword }) {
+                Text(if (showPassword) "Sembunyikan password" else "Tampilkan password")
+            }
+
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+
+            Button(
+                onClick = {
+                    when (val check = checkEditAccountInput(name, username, password, hostsText)) {
+                        EditInputCheck.MissingFields ->
+                            error = "Nama, username, dan password wajib diisi."
+
+                        EditInputCheck.InvalidHost ->
+                            error = "Isi minimal satu alamat portal yang valid."
+
+                        is EditInputCheck.Valid -> onSave(
+                            check.name,
+                            check.username,
+                            check.password,
+                            check.hosts
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+            ) { Text("Simpan perubahan") }
+
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text("Pilih kampus") },
+            text = {
+                LazyColumn {
+                    items(directory, key = { it.host }) { portal ->
+                        TextButton(
+                            onClick = {
+                                val current = parseHostList(hostsText).orEmpty()
+                                hostsText = if (current.size <= 1) {
+                                    portal.host
+                                } else {
+                                    (current + portal.host).distinct().joinToString(", ")
+                                }
                                 showPicker = false
                             },
                             modifier = Modifier.fillMaxWidth()

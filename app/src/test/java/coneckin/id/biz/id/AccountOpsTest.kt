@@ -130,4 +130,37 @@ class AccountOpsTest {
         base.withUpdatedAccount("1", "X", "x", "x", listOf("x.y"))
         assertEquals("A", base.accounts.first { it.id == "1" }.name)
     }
+
+    // ---------- parseHostList & checkEditAccountInput ----------
+
+    @Test
+    fun parseHostList_splitsCommaAndNewlineAndDeduplicates() {
+        val r = parseHostList("HTTP://YPBPI.hotspot/login, portal.contoh\nypbpi.hotspot")
+        assertEquals(listOf("ypbpi.hotspot", "portal.contoh"), r)
+    }
+
+    @Test
+    fun parseHostList_rejectsEmptyOrAnyInvalidEntry() {
+        assertNull(parseHostList(""))
+        assertNull(parseHostList(" , \n "))
+        assertNull(parseHostList("ypbpi.hotspot, bad host"))
+    }
+
+    @Test
+    fun checkEditAccountInput_validMultipleHosts() {
+        val r = checkEditAccountInput("  Akun A ", " user ", " pw ", "ypbpi.hotspot, kampus.b")
+        assertEquals(
+            EditInputCheck.Valid("Akun A", "user", " pw ", listOf("ypbpi.hotspot", "kampus.b")),
+            r
+        )
+    }
+
+    @Test
+    fun checkEditAccountInput_missingFieldsAndInvalidHost() {
+        assertEquals(EditInputCheck.MissingFields, checkEditAccountInput("", "u", "p", "a.b"))
+        assertEquals(EditInputCheck.MissingFields, checkEditAccountInput("n", "  ", "p", "a.b"))
+        assertEquals(EditInputCheck.MissingFields, checkEditAccountInput("n", "u", "", "a.b"))
+        assertEquals(EditInputCheck.InvalidHost, checkEditAccountInput("n", "u", "p", "a.b, bad host"))
+        assertEquals(EditInputCheck.InvalidHost, checkEditAccountInput("n", "u", "p", "   "))
+    }
 }

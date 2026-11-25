@@ -24,11 +24,108 @@ object ReportSettings {
     }
 }
 
+/** Membersihkan merek perangkat agar sesuai pola validasi server (maks. 30 karakter). */
+fun sanitizeManufacturer(raw: String): String = raw.lowercase()
+    .filter { it.isLetterOrDigit() || it == ' ' || it == '-' || it == '_' }
+    .take(30)
+
+/** Menyusun payload JSON laporan masalah anonim sesuai kontrak POST /reports. */
+fun buildReportBody(
+    host: String,
+    code: String,
+    androidSdk: Int,
+    appVersion: String,
+    appCode: Long,
+    manufacturer: String
+): String = JSONObject()
+    .put("host", host)
+    .put("code", code)
+    .put("androidSdk", androidSdk)
+    .put("appVersion", appVersion.take(20))
+    .put("appCode", appCode)
+    .put("manufacturer", sanitizeManufacturer(manufacturer))
+    .toString()
+
+/**
+ * Antrean laporan masalah berbasis KeyValueStore tanpa ketergantungan Android,
+ * sehingga seluruh logika simpan, batas antrean, dan pengiriman ulang bisa diuji di JVM.
+ */
+class ReportQueue(
+    private val storage: KeyValueStore,
+    private val maxPending: Int = 20
+) {
+    fun load(): MutableList<Pair<String, String>> {
+        val text = storage.getString(KEY) ?: return mutableListOf()
+        return try {
+            val arr = JSONArray(text)
+            MutableList(arr.length()) { i ->
+                val o = arr.getJSONObject(i)
+                o.getString("host") to o.getString("code")
+            }
+        } catch (e: Exception) {
+            mutableListOf()
+        }
+    }
+
+    fun save(items: List<Pair<String, String>>) {
+        val arr = JSONArray()
+        items.forEach {
+            arr.put(JSONObject().put("host", it.first).put("code", it.second))
+        }
+        storage.putString(KEY, arr.toString())
+    }
+
+    fun enqueue(host: String, code: String) {
+        val items = load()
+        items.add(host to code)
+        save(items.takeLast(maxPending))
+    }
+
+    fun clear() {
+        save(emptyList())
+    }
+
+    /**
+     * Mengirim seluruh item dalam antrean memakai fungsi [sender] yang mengembalikan kode HTTP.
+     * 2xx = terkirim, 400 = ditolak permanen dan dibuang, lainnya = berhenti & simpan sisa.
+     */
+    fun flushWith(sender: (host: String, code: String) -> Int) {
+        val items = load()
+        if (items.isEmpty()) return
+        val remaining = mutableListOf<Pair<String, String>>()
+        var stop = false
+        for (item in items) {
+            if (stop) {
+                remaining.add(item)
+                continue
+            }
+            val code = sender(item.first, item.second)
+            when {
+                code in 200..299 -> {}   // terkirim
+                code == 400 -> {}        // ditolak server karena tidak valid, dibuang
+                else -> {                // gagal sementara (offline, 429, 503), simpan lagi
+                    remaining.add(item)
+                    stop = true
+                }
+            }
+        }
+        save(remaining)
+    }
+
+    companion object {
+        const val KEY = "pending"
+    }
+}
+
 object Reporter {
     private const val PREFS = "coneckin_reports"
-    private const val KEY = "pending"
     private const val MAX_PENDING = 20
     private val mutex = Mutex()
+
+    private fun queue(context: Context) = ReportQueue(
+        PrefsStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)),
+        MAX_PENDING
+    )
 
     /**
      * Mengubah hasil login menjadi (host, kode) yang boleh dilaporkan.
@@ -44,81 +141,32 @@ object Reporter {
         else -> null
     }
 
-    private fun load(context: Context): MutableList<Pair<String, String>> {
-        val text = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: return mutableListOf()
-        return try {
-            val arr = JSONArray(text)
-            MutableList(arr.length()) { i ->
-                val o = arr.getJSONObject(i)
-                o.getString("host") to o.getString("code")
-            }
-        } catch (e: Exception) {
-            mutableListOf()
-        }
-    }
-
-    private fun save(context: Context, items: List<Pair<String, String>>) {
-        val arr = JSONArray()
-        items.forEach {
-            arr.put(JSONObject().put("host", it.first).put("code", it.second))
-        }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, arr.toString()).apply()
-    }
-
     suspend fun enqueue(context: Context, host: String, code: String) {
-        mutex.withLock {
-            val items = load(context)
-            items.add(host to code)
-            save(context, items.takeLast(MAX_PENDING))
-        }
+        mutex.withLock { queue(context).enqueue(host, code) }
     }
 
     suspend fun clearPending(context: Context) {
-        mutex.withLock { save(context, emptyList()) }
+        mutex.withLock { queue(context).clear() }
     }
 
     /** Mengirim antrean. Berhenti pada kegagalan pertama dan mencoba lagi nanti. */
     suspend fun flush(context: Context) = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val items = load(context)
-            if (items.isEmpty()) return@withLock
-            val remaining = mutableListOf<Pair<String, String>>()
-            var stop = false
-            for (item in items) {
-                if (stop) {
-                    remaining.add(item)
-                    continue
-                }
-                val code = post(context, item.first, item.second)
-                when {
-                    code in 200..299 -> {}   // terkirim
-                    code == 400 -> {}        // ditolak server karena tidak valid, dibuang
-                    else -> {                // gagal sementara (offline, 429, 503), simpan lagi
-                        remaining.add(item)
-                        stop = true
-                    }
-                }
-            }
-            save(context, remaining)
+            queue(context).flushWith { host, code -> post(context, host, code) }
         }
     }
 
     private fun post(context: Context, host: String, code: String): Int {
         var conn: HttpURLConnection? = null
         return try {
-            val maker = Build.MANUFACTURER.lowercase()
-                .filter { it.isLetterOrDigit() || it == ' ' || it == '-' || it == '_' }
-                .take(30)
-            val body = JSONObject()
-                .put("host", host)
-                .put("code", code)
-                .put("androidSdk", Build.VERSION.SDK_INT)
-                .put("appVersion", appVersionName(context).take(20))
-                .put("appCode", appVersionCode(context))
-                .put("manufacturer", maker)
-                .toString()
+            val body = buildReportBody(
+                host = host,
+                code = code,
+                androidSdk = Build.VERSION.SDK_INT,
+                appVersion = appVersionName(context),
+                appCode = appVersionCode(context),
+                manufacturer = Build.MANUFACTURER
+            )
 
             conn = URL("$API_BASE/reports").openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
