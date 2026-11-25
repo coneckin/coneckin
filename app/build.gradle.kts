@@ -32,6 +32,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Laporan coverage unit test: ./gradlew createDebugUnitTestCoverageReport
+            enableUnitTestCoverage = true
+        }
         release {
             if (System.getenv("KEYSTORE_PATH") != null) {
                 signingConfig = signingConfigs.getByName("release")

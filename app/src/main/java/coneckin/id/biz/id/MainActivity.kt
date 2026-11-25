@@ -294,14 +294,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             onLogin = { requestLogin() },
             onSelect = { id -> persist(data.copy(activeAccountId = id)) },
             onDelete = { id ->
-                persist(
-                    AppData(
-                        accounts = data.accounts.filter { it.id != id },
-                        portals = data.portals.filter { it.accountId != id },
-                        activeAccountId = if (data.activeAccountId == id) null
-                        else data.activeAccountId
-                    )
-                )
+                persist(data.withoutAccount(id))
             },
             onAdd = { screen = Screen.ADD },
             onSettings = {
@@ -315,13 +308,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             AddAccountScreen(
                 directory = directory,
                 onSave = { account, host ->
-                    persist(
-                        AppData(
-                            accounts = data.accounts + account,
-                            portals = data.portals + Portal(host, account.id),
-                            activeAccountId = account.id
-                        )
-                    )
+                    persist(data.withAccount(account, host))
                     screen = Screen.HOME
                 },
                 onBack = { screen = Screen.HOME }

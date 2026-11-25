@@ -24,28 +24,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.coroutines.resume
 
-sealed class LoginResult {
-    object AlreadyOnline : LoginResult()
-    object Success : LoginResult()
-    object NoWifi : LoginResult()
-    data class UnknownPortal(val host: String) : LoginResult()
-    data class Failed(
-        val message: String,
-        val portalHost: String? = null,
-        val code: String = "OTHER"
-    ) : LoginResult()
-}
-
-fun LoginResult.toText(): String = when (this) {
-    LoginResult.AlreadyOnline -> "Sudah tersambung ke internet."
-    LoginResult.Success -> "Tersambung. Internet sudah aktif."
-    LoginResult.NoWifi ->
-        "HP belum tersambung ke WiFi. Sambungkan dulu lewat pengaturan WiFi."
-    is LoginResult.UnknownPortal ->
-        "Portal \"${this.host}\" belum terdaftar."
-    is LoginResult.Failed -> this.message
-}
-
 private data class Probe(val code: Int, val location: String?)
 
 class PortalLogin(private val context: Context) {
@@ -76,22 +54,11 @@ class PortalLogin(private val context: Context) {
             val redirectHost = redirect?.host?.lowercase()
             Log.d(TAG, "host redirect: $redirectHost")
 
-            val active = data.activeAccount()
-            val candidates = if (redirectHost != null) {
-                data.portals.filter { it.host == redirectHost }
-            } else {
-                data.portals
+            val (account, portal) = when (val pick = pickPortal(data, redirectHost)) {
+                is PortalPick.Found -> pick.account to pick.portal
+                is PortalPick.Unknown -> return LoginResult.UnknownPortal(pick.host)
+                is PortalPick.Failed -> return LoginResult.Failed(pick.message)
             }
-            if (candidates.isEmpty()) {
-                return if (redirectHost != null) LoginResult.UnknownPortal(redirectHost)
-                else LoginResult.Failed("Belum ada portal tersimpan.")
-            }
-            // Utamakan akun yang dipilih pengguna. Jika portal ini bukan miliknya,
-            // pakai akun yang memiliki portal tersebut.
-            val portal = candidates.firstOrNull { it.accountId == active?.id }
-                ?: candidates.first()
-            val account = data.accounts.firstOrNull { it.id == portal.accountId }
-                ?: return LoginResult.Failed("Akun untuk portal ini tidak ditemukan.")
             val host = portal.host
 
             val loginUrl =
@@ -113,7 +80,7 @@ class PortalLogin(private val context: Context) {
                 )
             }
             if (fill != "CLICKED" && fill != "REQUESTED") {
-                return LoginResult.Failed(fillError(fill), host, fillCode(fill))
+                return LoginResult.Failed(fillErrorText(fill), host, fillReportCode(fill))
             }
 
             onStatus("Memproses login...")
@@ -226,24 +193,6 @@ class PortalLogin(private val context: Context) {
                 if (cont.isActive) cont.resume(result ?: "")
             }
         }
-
-    private fun fillError(code: String): String = when (code) {
-        "TIMEOUT", "LOAD_FAILED" ->
-            "Halaman login tidak bisa dibuka. Pastikan masih tersambung ke WiFi kampus."
-        "HOST_MISMATCH" ->
-            "Halaman login dialihkan ke alamat lain, jadi login dibatalkan demi keamanan."
-        "NO_USER_FIELD", "NO_SUBMIT" ->
-            "Bentuk halaman login tidak dikenali. Portal ini mungkin butuh langkah manual."
-        else -> "Gagal mengisi form login ($code)."
-    }
-
-    // Hanya kode yang sudah ada di daftar server yang boleh dilaporkan.
-    private fun fillCode(code: String): String = when (code) {
-        "TIMEOUT", "LOAD_FAILED", "HOST_MISMATCH",
-        "NO_USER_FIELD", "NO_SUBMIT" -> code
-
-        else -> "OTHER"
-    }
 
     companion object {
         private const val TAG = "Coneckin"
