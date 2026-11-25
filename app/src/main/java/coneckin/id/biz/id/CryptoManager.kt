@@ -9,7 +9,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-object CryptoManager {
+object CryptoManager : SecretCodec {
     private const val KEY_ALIAS = "coneckin_master_key"
     private const val LEGACY_KEY_ALIAS = "panlink_master_key"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -47,14 +47,14 @@ object CryptoManager {
         }
     }
 
-    fun encrypt(plain: String): String {
+    override fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, getKey())
         val encrypted = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
         return Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP)
     }
 
-    fun decrypt(encoded: String): String {
+    override fun decrypt(encoded: String): String {
         val all = Base64.decode(encoded, Base64.NO_WRAP)
         val iv = all.copyOfRange(0, IV_SIZE)
         val encrypted = all.copyOfRange(IV_SIZE, all.size)

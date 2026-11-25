@@ -86,11 +86,10 @@ object Api {
     }
 }
 
-class RemoteCache(context: Context) {
-    private val prefs = context.getSharedPreferences("coneckin_cache", Context.MODE_PRIVATE)
-
+/** Penyimpanan cache daftar kampus dan konfigurasi tanpa ketergantungan Android. */
+class RemoteCacheStore(private val storage: KeyValueStore) {
     fun portals(): List<DirectoryPortal> {
-        val text = prefs.getString("portals", null) ?: return DEFAULT_DIRECTORY
+        val text = storage.getString(KEY_PORTALS) ?: return DEFAULT_DIRECTORY
         return try {
             parsePortals(text).ifEmpty { DEFAULT_DIRECTORY }
         } catch (e: Exception) {
@@ -101,11 +100,11 @@ class RemoteCache(context: Context) {
     fun savePortals(list: List<DirectoryPortal>) {
         val arr = JSONArray()
         list.forEach { arr.put(JSONObject().put("name", it.name).put("host", it.host)) }
-        prefs.edit().putString("portals", JSONObject().put("portals", arr).toString()).apply()
+        storage.putString(KEY_PORTALS, JSONObject().put("portals", arr).toString())
     }
 
     fun config(): RemoteConfig? {
-        val text = prefs.getString("config", null) ?: return null
+        val text = storage.getString(KEY_CONFIG) ?: return null
         return try {
             parseConfig(text)
         } catch (e: Exception) {
@@ -119,8 +118,27 @@ class RemoteCache(context: Context) {
             .put("latestCode", c.latestCode ?: JSONObject.NULL)
             .put("minSupportedCode", c.minSupportedCode)
             .put("message", c.message)
-        prefs.edit().putString("config", o.toString()).apply()
+        storage.putString(KEY_CONFIG, o.toString())
     }
+
+    companion object {
+        const val KEY_PORTALS = "portals"
+        const val KEY_CONFIG = "config"
+    }
+}
+
+class RemoteCache(context: Context) {
+    private val store = RemoteCacheStore(
+        PrefsStore(context.getSharedPreferences("coneckin_cache", Context.MODE_PRIVATE))
+    )
+
+    fun portals(): List<DirectoryPortal> = store.portals()
+
+    fun savePortals(list: List<DirectoryPortal>) = store.savePortals(list)
+
+    fun config(): RemoteConfig? = store.config()
+
+    fun saveConfig(c: RemoteConfig) = store.saveConfig(c)
 }
 
 @Suppress("DEPRECATION")
