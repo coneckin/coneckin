@@ -24,5 +24,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Test dan coverage
+      - name: Pasang dependensi server
+        run: npm install --no-audit --no-fund
+
+      - name: Test dan verifikasi coverage minimal 80%
         run: npm test

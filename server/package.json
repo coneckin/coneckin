@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --experimental-test-coverage"
+    "test": "node --test --experimental-test-coverage --test-coverage-lines=80"
   },
   "engines": {
     "node": ">=20"

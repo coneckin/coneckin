@@ -3,7 +3,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  REPORT_CODES, MAX_REPORTS, REPORT_TTL_SECONDS, redact, parseReport, rateLimit
+  REPORT_CODES, MAX_REPORTS, REPORT_TTL_SECONDS,
+  redact, normalizeHost, isValidObjectId,
+  parseReport, parsePortalCreate, parsePortalUpdate,
+  parseConfigUpdate, parseReportQuery, summarizeReports,
+  rateLimit, requireAdmin, publicCors
 } = require('../lib');
 
 const valid = () => ({
@@ -175,4 +179,153 @@ test('rateLimit membersihkan entri kedaluwarsa lewat timer berkala', (t) => {
   t.mock.timers.tick(1000);                 // pembersihan menghapus entri lama
   limiter({ ip: 'a' }, fakeRes(), next);   // dihitung sebagai permintaan baru
   assert.equal(passed, 2);
+});
+
+// ---------- normalizeHost & isValidObjectId ----------
+test('normalizeHost membersihkan huruf dan menolak input tidak valid', () => {
+  assert.equal(normalizeHost('  YPBPI.Hotspot  '), 'ypbpi.hotspot');
+  assert.equal(normalizeHost('a'), 'a');
+  assert.equal(normalizeHost(''), null);
+  assert.equal(normalizeHost('bad host'), null);
+  assert.equal(normalizeHost('a'.repeat(254)), null);
+  assert.equal(normalizeHost(123), null);
+});
+
+test('isValidObjectId memeriksa 24 karakter heksadesimal', () => {
+  assert.equal(isValidObjectId('507f1f77bcf86cd799439011'), true);
+  assert.equal(isValidObjectId('507F1F77BCF86CD799439011'), true);
+  assert.equal(isValidObjectId('pendek'), false);
+  assert.equal(isValidObjectId('507f1f77bcf86cd79943901g'), false);
+  assert.equal(isValidObjectId(null), false);
+});
+
+// ---------- parsePortalCreate & parsePortalUpdate ----------
+test('parsePortalCreate menerima input valid dan default verified=true', () => {
+  assert.deepEqual(
+    parsePortalCreate({ name: '  ULBI  ', host: ' YPBPI.Hotspot ' }),
+    { name: 'ULBI', host: 'ypbpi.hotspot', verified: true }
+  );
+  assert.deepEqual(
+    parsePortalCreate({ name: 'Kampus B', host: 'wifi.b.ac.id', verified: false }),
+    { name: 'Kampus B', host: 'wifi.b.ac.id', verified: false }
+  );
+});
+
+test('parsePortalCreate menolak input tidak valid', () => {
+  assert.equal(parsePortalCreate(null), null);
+  assert.equal(parsePortalCreate({ name: '', host: 'a.b' }), null);
+  assert.equal(parsePortalCreate({ name: 'x'.repeat(61), host: 'a.b' }), null);
+  assert.equal(parsePortalCreate({ name: 'OK', host: 'bad host' }), null);
+  assert.equal(parsePortalCreate({ name: 'OK', host: 'a.b', verified: 'ya' }), null);
+});
+
+test('parsePortalUpdate menerima ubah parsial dan menolak body kosong atau tidak valid', () => {
+  assert.deepEqual(parsePortalUpdate({ name: '  ULBI Baru ' }), { name: 'ULBI Baru' });
+  assert.deepEqual(parsePortalUpdate({ verified: false }), { verified: false });
+  assert.deepEqual(
+    parsePortalUpdate({ name: 'Kampus', verified: true }),
+    { name: 'Kampus', verified: true }
+  );
+  assert.equal(parsePortalUpdate(null), null);
+  assert.equal(parsePortalUpdate({}), null);
+  assert.equal(parsePortalUpdate({ name: 123 }), null);
+  assert.equal(parsePortalUpdate({ name: '   ' }), null);
+  assert.equal(parsePortalUpdate({ name: 'a'.repeat(61) }), null);
+  assert.equal(parsePortalUpdate({ verified: 'true' }), null);
+});
+
+// ---------- parseConfigUpdate ----------
+test('parseConfigUpdate menerima pesan dan minSupportedCode valid', () => {
+  assert.deepEqual(parseConfigUpdate({ message: '  Info baru  ' }), { message: 'Info baru' });
+  assert.deepEqual(parseConfigUpdate({ minSupportedCode: 14 }), { minSupportedCode: 14 });
+  assert.deepEqual(
+    parseConfigUpdate({ message: '', minSupportedCode: 0 }),
+    { message: '', minSupportedCode: 0 }
+  );
+});
+
+test('parseConfigUpdate menolak input kosong atau melampaui batas', () => {
+  assert.equal(parseConfigUpdate(null), null);
+  assert.equal(parseConfigUpdate({}), null);
+  assert.equal(parseConfigUpdate({ message: 123 }), null);
+  assert.equal(parseConfigUpdate({ message: 'm'.repeat(501) }), null);
+  assert.equal(parseConfigUpdate({ minSupportedCode: -1 }), null);
+  assert.equal(parseConfigUpdate({ minSupportedCode: 1000001 }), null);
+  assert.equal(parseConfigUpdate({ minSupportedCode: 1.5 }), null);
+  assert.equal(parseConfigUpdate({ minSupportedCode: '14' }), null);
+});
+
+// ---------- parseReportQuery & summarizeReports ----------
+test('parseReportQuery membangun filter host, code, dan limit', () => {
+  assert.deepEqual(parseReportQuery(), { filter: {}, limit: 50 });
+  assert.deepEqual(
+    parseReportQuery({ host: ' YPBPI.Hotspot ', code: 'TIMEOUT', limit: '25' }),
+    { filter: { host: 'ypbpi.hotspot', code: 'TIMEOUT' }, limit: 25 }
+  );
+});
+
+test('parseReportQuery menolak parameter tidak valid', () => {
+  assert.equal(parseReportQuery({ host: 'bad host' }), null);
+  assert.equal(parseReportQuery({ code: 'TIDAK_ADA' }), null);
+  assert.equal(parseReportQuery({ limit: '0' }), null);
+  assert.equal(parseReportQuery({ limit: '201' }), null);
+  assert.equal(parseReportQuery({ limit: 'abc' }), null);
+});
+
+test('summarizeReports menghitung jumlah per kode dan per host', () => {
+  const s = summarizeReports([
+    { host: 'a.hotspot', code: 'TIMEOUT' },
+    { host: 'a.hotspot', code: 'TIMEOUT' },
+    { host: 'b.hotspot', code: 'NO_SUBMIT' }
+  ]);
+  assert.deepEqual(s, {
+    byCode: { TIMEOUT: 2, NO_SUBMIT: 1 },
+    byHost: { 'a.hotspot': 2, 'b.hotspot': 1 }
+  });
+});
+
+// ---------- requireAdmin & publicCors ----------
+test('requireAdmin mengembalikan 503 bila ADMIN_TOKEN belum diatur', () => {
+  const mw = requireAdmin(() => '');
+  const res = fakeRes();
+  let called = false;
+  mw({ headers: {} }, res, () => { called = true; });
+  assert.equal(called, false);
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.body, { error: 'admin_belum_diatur' });
+});
+
+test('requireAdmin menolak header hilang atau token salah (401) dan meloloskan token benar', () => {
+  const mw = requireAdmin(() => 'rahasia-super-kuat');
+
+  const r1 = fakeRes();
+  mw({ headers: {} }, r1, () => assert.fail('tidak boleh lolos'));
+  assert.equal(r1.statusCode, 401);
+
+  const r2 = fakeRes();
+  mw({ headers: { authorization: 'Bearer salah' } }, r2, () => assert.fail('tidak boleh lolos'));
+  assert.equal(r2.statusCode, 401);
+
+  const r3 = fakeRes();
+  let ok = false;
+  mw({ headers: { authorization: 'Bearer rahasia-super-kuat' } }, r3, () => { ok = true; });
+  assert.equal(ok, true);
+});
+
+test('publicCors mengatur header CORS dan merespons preflight OPTIONS 204', () => {
+  const mw = publicCors();
+  let statusSent = null;
+  let nextCalled = false;
+  const headers = {};
+  const res = {
+    set(k, v) { headers[k] = v; return this; },
+    sendStatus(c) { statusSent = c; return this; }
+  };
+
+  mw({ method: 'GET' }, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(headers['Access-Control-Allow-Origin'], '*');
+
+  mw({ method: 'OPTIONS' }, res, () => assert.fail('OPTIONS harus langsung 204'));
+  assert.equal(statusSent, 204);
 });
