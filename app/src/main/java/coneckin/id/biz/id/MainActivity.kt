@@ -4,10 +4,13 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,6 +31,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,6 +72,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -143,6 +151,54 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     fun persist(newData: AppData) {
         store.save(newData)
         data = newData
+    }
+
+    // ── Export / Import ──────────────────────────────────────────────
+    var pendingImport by remember { mutableStateOf<AppData?>(null) }
+    var pendingAuthAction by remember { mutableStateOf<String?>(null) }
+    var showPinSetup by remember { mutableStateOf(false) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = AppDataJson.toJson(data)
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(json.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(
+                    context,
+                    "${data.accounts.size} akun berhasil diekspor",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal mengekspor: ${e.message}", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val json = context.contentResolver.openInputStream(uri)?.use {
+                    it.readBytes().toString(Charsets.UTF_8)
+                } ?: throw Exception("Tidak bisa membaca file")
+                val imported = AppDataJson.parse(json)
+                if (imported.accounts.isEmpty()) {
+                    Toast.makeText(context, "File tidak mengandung akun", Toast.LENGTH_SHORT)
+                        .show()
+                } else {
+                    pendingImport = imported
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Gagal mengimpor: ${e.message}", Toast.LENGTH_SHORT)
+                    .show()
+            }
+        }
     }
 
     fun startLogin(current: AppData) {
@@ -296,8 +352,12 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             onLogin = { requestLogin() },
             onSelect = { id -> persist(data.copy(activeAccountId = id)) },
             onEdit = { id ->
-                editingAccountId = id
-                screen = Screen.EDIT
+                if (AppPin.hasPin(context)) {
+                    pendingAuthAction = id
+                } else {
+                    editingAccountId = id
+                    screen = Screen.EDIT
+                }
             },
             onDelete = { id ->
                 persist(data.withoutAccount(id))
@@ -315,7 +375,11 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 directory = directory,
                 onSave = { account, host ->
                     persist(data.withAccount(account, host))
-                    screen = Screen.HOME
+                    if (!AppPin.hasPin(context)) {
+                        showPinSetup = true
+                    } else {
+                        screen = Screen.HOME
+                    }
                 },
                 onBack = { screen = Screen.HOME }
             )
@@ -378,6 +442,20 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 onWifiSettings = {
                     context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
                 },
+                onExport = {
+                    if (data.accounts.isEmpty()) {
+                        Toast.makeText(context, "Belum ada akun untuk diekspor", Toast.LENGTH_SHORT)
+                            .show()
+                    } else if (AppPin.hasPin(context)) {
+                        pendingAuthAction = "export"
+                    } else {
+                        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                        exportLauncher.launch("coneckin_backup_$dateStr.json")
+                    }
+                },
+                onImport = {
+                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                },
                 onBack = { screen = Screen.HOME }
             )
         }
@@ -417,6 +495,81 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { unknownHost = null }) { Text("Batal") }
+            }
+        )
+    }
+
+    // Konfirmasi impor akun
+    pendingImport?.let { imported ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("Impor akun") },
+            text = {
+                Text(
+                    "File berisi ${imported.accounts.size} akun. " +
+                            "Akun yang sudah ada (username dan portal sama) akan dilewati."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val (merged, addedCount) = data.mergeImported(imported)
+                    persist(merged)
+                    pendingImport = null
+                    Toast.makeText(
+                        context,
+                        "$addedCount akun baru ditambahkan",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }) { Text("Impor") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) { Text("Batal") }
+            }
+        )
+    }
+
+    // Fungsi setelah verifikasi berhasil
+    fun handleAuthSuccess() {
+        val action = pendingAuthAction ?: return
+        pendingAuthAction = null
+        if (action == "export") {
+            val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+            exportLauncher.launch("coneckin_backup_$dateStr.json")
+        } else {
+            editingAccountId = action
+            screen = Screen.EDIT
+        }
+    }
+
+    // Dialog verifikasi PIN / sidik jari
+    if (pendingAuthAction != null) {
+        PinVerifyDialog(
+            onSuccess = { handleAuthSuccess() },
+            onDismiss = { pendingAuthAction = null },
+            onBiometric = if (AppLock.isDeviceSecure(context)) {
+                {
+                    AppLock.authenticate(
+                        context = context,
+                        title = if (pendingAuthAction == "export") "Verifikasi untuk mengekspor akun"
+                        else "Verifikasi untuk mengubah akun",
+                        onSuccess = { handleAuthSuccess() },
+                        onFailure = { msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            } else null
+        )
+    }
+
+    // Dialog buat PIN keamanan (muncul setelah pembuatan akun pertama)
+    if (showPinSetup) {
+        PinSetupDialog(
+            onDone = { pin ->
+                AppPin.setPin(context, pin)
+                showPinSetup = false
+                screen = Screen.HOME
+                Toast.makeText(context, "PIN keamanan berhasil dibuat", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -701,6 +854,8 @@ fun SettingsScreen(
     onRefresh: () -> Unit,
     onUpdate: () -> Unit,
     onWifiSettings: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
     onBack: () -> Unit
 ) {
     var showSample by remember { mutableStateOf(false) }
@@ -737,12 +892,11 @@ fun SettingsScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "Verifikasi sebelum login",
+                            "Kunci sebelum login",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            "Minta PIN, pola, atau sidik jari sebelum login WiFi dijalankan. " +
-                                    "Mematikan fitur ini juga memerlukan verifikasi.",
+                            "Minta sidik jari atau kunci layar HP sebelum masuk WiFi.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -768,12 +922,11 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "Kirim laporan masalah",
+                                "Bantu perbaiki aplikasi",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "Saat login gagal, kirim kode kesalahan tanpa data pribadi " +
-                                        "untuk membantu perbaikan aplikasi. Bawaan mati.",
+                                "Kirim catatan otomatis jika login gagal, tanpa data pribadi.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -781,16 +934,16 @@ fun SettingsScreen(
                         Switch(checked = reportEnabled, onCheckedChange = onToggleReport)
                     }
                     TextButton(onClick = { showSample = true }) {
-                        Text("Lihat data yang dikirim")
+                        Text("Lihat contoh data")
                     }
                     if (reportEnabled && isDevBuild) {
                         TextButton(onClick = {
                             testSent = true
                             onTestReport()
-                        }) { Text("Kirim laporan uji (khusus debug)") }
+                        }) { Text("Kirim laporan uji (debug)") }
                         if (testSent) {
                             Text(
-                                "Laporan uji diantrekan. Cek di MongoDB Atlas.",
+                                "Laporan uji terkirim.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -805,15 +958,14 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Versi dan pembaruan", style = MaterialTheme.typography.titleMedium)
+                    Text("Pembaruan aplikasi", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Versi terpasang: ${appVersion.ifEmpty { "-" }}",
+                        "Versi saat ini: ${appVersion.ifEmpty { "-" }}",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        if (latestVersion != null) "Versi terbaru: $latestVersion"
-                        else "Versi terbaru belum diketahui",
+                        "Versi terbaru: ${latestVersion ?: "Belum dicek"}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -836,15 +988,34 @@ fun SettingsScreen(
             }
 
             OutlinedCard(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Pindah perangkat", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Simpan akun ke file cadangan untuk dipakai di HP lain. Jaga file ini karena berisi password.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row {
+                        TextButton(onClick = onExport) { Text("Ekspor") }
+                        TextButton(onClick = onImport) { Text("Impor") }
+                    }
+                }
+            }
+
+            OutlinedCard(
                 onClick = onWifiSettings,
                 shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Pengaturan WiFi HP", style = MaterialTheme.typography.titleMedium)
+                    Text("Pengaturan WiFi", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Buka pengaturan Android untuk memilih jaringan WiFi.",
+                        "Pilih jaringan WiFi di pengaturan HP.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -852,9 +1023,7 @@ fun SettingsScreen(
             }
 
             Text(
-                "Username dan password disimpan terenkripsi hanya di HP ini dan tidak pernah " +
-                        "dikirim ke server Coneckin. Server hanya dipakai untuk daftar kampus, " +
-                        "informasi versi, dan laporan masalah jika Anda mengaktifkannya.",
+                "Username dan password disimpan aman hanya di HP ini, tidak pernah dikirim ke mana pun.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -878,9 +1047,7 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "Tidak ada username, password, nama WiFi, nama akun, atau identitas " +
-                                "pengguna. Seperti server web pada umumnya, alamat IP permintaan " +
-                                "tercatat di log hosting. Laporan dihapus otomatis setelah 90 hari.",
+                        "Username, password, dan nama WiFi tidak ikut dikirim. Laporan hanya berisi jenis kendala dan tipe HP, lalu dihapus otomatis setelah 90 hari.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -920,7 +1087,7 @@ fun AddAccountScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Tambah akun") },
+                title = { },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
@@ -981,12 +1148,19 @@ fun AddAccountScreen(
                 visualTransformation = if (showPassword)
                     VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(
+                            imageVector = if (showPassword) Icons.Default.VisibilityOff
+                                else Icons.Default.Visibility,
+                            contentDescription = if (showPassword) "Sembunyikan password"
+                                else "Tampilkan password"
+                        )
+                    }
+                },
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
             )
-            TextButton(onClick = { showPassword = !showPassword }) {
-                Text(if (showPassword) "Sembunyikan password" else "Tampilkan password")
-            }
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
@@ -1144,12 +1318,19 @@ fun EditAccountScreen(
                 visualTransformation = if (showPassword)
                     VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(
+                            imageVector = if (showPassword) Icons.Default.VisibilityOff
+                                else Icons.Default.Visibility,
+                            contentDescription = if (showPassword) "Sembunyikan password"
+                                else "Tampilkan password"
+                        )
+                    }
+                },
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
             )
-            TextButton(onClick = { showPassword = !showPassword }) {
-                Text(if (showPassword) "Sembunyikan password" else "Tampilkan password")
-            }
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
@@ -1219,4 +1400,122 @@ fun EditAccountScreen(
             }
         )
     }
+}
+
+
+@Composable
+fun PinSetupDialog(onDone: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    val fieldShape = RoundedCornerShape(14.dp)
+
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Buat PIN Keamanan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "PIN ini akan melindungi akun Anda dari penyalahgunaan " +
+                            "saat perangkat dipinjam. PIN diperlukan untuk mengubah " +
+                            "atau mengekspor akun."
+                )
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { newValue ->
+                        val digits = newValue.filter { it.isDigit() }
+                        if (digits.length <= 6) { pin = digits; error = "" }
+                    },
+                    label = { Text("PIN (4–6 digit)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    shape = fieldShape,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = confirmPin,
+                    onValueChange = { newValue ->
+                        val digits = newValue.filter { it.isDigit() }
+                        if (digits.length <= 6) { confirmPin = digits; error = "" }
+                    },
+                    label = { Text("Konfirmasi PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    shape = fieldShape,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error.isNotEmpty()) {
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                when {
+                    pin.length < 4 -> error = "PIN minimal 4 digit"
+                    pin != confirmPin -> error = "PIN tidak cocok"
+                    else -> onDone(pin)
+                }
+            }) { Text("Simpan") }
+        },
+        dismissButton = {}
+    )
+}
+
+@Composable
+fun PinVerifyDialog(
+    onSuccess: () -> Unit,
+    onDismiss: () -> Unit,
+    onBiometric: (() -> Unit)?
+) {
+    var pin by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val fieldShape = RoundedCornerShape(14.dp)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Verifikasi Keamanan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Masukkan PIN untuk melanjutkan.")
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { newValue ->
+                        val digits = newValue.filter { it.isDigit() }
+                        if (digits.length <= 6) { pin = digits; error = "" }
+                    },
+                    label = { Text("PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    shape = fieldShape,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error.isNotEmpty()) {
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+                if (onBiometric != null) {
+                    TextButton(onClick = onBiometric) {
+                        Text("Gunakan sidik jari")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (AppPin.verifyPin(context, pin)) {
+                    onSuccess()
+                } else {
+                    error = "PIN salah"
+                    pin = ""
+                }
+            }) { Text("Verifikasi") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Batal") }
+        }
+    )
 }

@@ -134,3 +134,39 @@ fun checkEditAccountInput(
     val hosts = parseHostList(hostsInput) ?: return EditInputCheck.InvalidHost
     return EditInputCheck.Valid(name.trim(), username.trim(), password, hosts)
 }
+
+/**
+ * Menggabungkan data yang diimpor ke data yang sudah ada.
+ * Akun yang diimpor mendapat ID baru supaya tidak bentrok.
+ * Akun yang username-nya sudah ada di portal yang sama akan dilewati.
+ */
+fun AppData.mergeImported(imported: AppData): Pair<AppData, Int> {
+    // Pasangan (username, host) yang sudah ada
+    val existingPairs = mutableSetOf<Pair<String, String>>()
+    for (acc in accounts) {
+        for (p in portals.filter { it.accountId == acc.id }) {
+            existingPairs.add(acc.username to p.host)
+        }
+    }
+
+    val addedAccounts = mutableListOf<Account>()
+    val addedPortals = mutableListOf<Portal>()
+
+    for (acc in imported.accounts) {
+        val accPortals = imported.portals.filter { it.accountId == acc.id }
+        // Lewati jika semua portal akun ini sudah ada dengan username yang sama
+        val allExist = accPortals.isNotEmpty() &&
+                accPortals.all { p -> (acc.username to p.host) in existingPairs }
+        if (allExist) continue
+
+        val newId = java.util.UUID.randomUUID().toString()
+        addedAccounts.add(acc.copy(id = newId))
+        accPortals.forEach { addedPortals.add(it.copy(accountId = newId)) }
+    }
+
+    val merged = copy(
+        accounts = accounts + addedAccounts,
+        portals = portals + addedPortals
+    )
+    return merged to addedAccounts.size
+}
