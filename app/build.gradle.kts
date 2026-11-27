@@ -40,7 +40,8 @@ android {
             if (System.getenv("KEYSTORE_PATH") != null) {
                 signingConfig = signingConfigs.getByName("release")
             }
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -112,7 +113,12 @@ val logicCoverageClasses = setOf(
     "coneckin/id/biz/id/DirectoryPortal",
     "coneckin/id/biz/id/RemoteCacheStore",
     "coneckin/id/biz/id/ReportQueue",
-    "coneckin/id/biz/id/ReporterKt"
+    "coneckin/id/biz/id/ReporterKt",
+    "coneckin/id/biz/id/PinManager",
+    "coneckin/id/biz/id/PinCheck",
+    "coneckin/id/biz/id/PinCheck\$Success",
+    "coneckin/id/biz/id/PinCheck\$WrongPin",
+    "coneckin/id/biz/id/PinCheck\$Locked"
 )
 
 abstract class VerifyLogicCoverageTask : org.gradle.api.DefaultTask() {

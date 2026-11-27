@@ -38,7 +38,7 @@ object AppLock {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             builder.setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_WEAK or
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
                         BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
         } else {

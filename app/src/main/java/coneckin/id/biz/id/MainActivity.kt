@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import coneckin.id.biz.id.ui.theme.ConeckinTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -166,6 +167,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     // ── Export / Import ──────────────────────────────────────────────
     var pendingImport by remember { mutableStateOf<AppData?>(null) }
     var hasPin by remember { mutableStateOf(AppPin.hasPin(context)) }
+    var sessionVerified by rememberSaveable { mutableStateOf(false) }
     var pendingAuth by remember { mutableStateOf<PendingAuth?>(null) }
     var showPinSetup by remember { mutableStateOf(false) }
     var pinSetupDismissible by remember { mutableStateOf(false) }
@@ -185,7 +187,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                     Toast.LENGTH_SHORT
                 ).show()
             } catch (e: Exception) {
-                Toast.makeText(context, "Gagal mengekspor: ${e.message}", Toast.LENGTH_SHORT)
+                Toast.makeText(context, "Gagal menyimpan file cadangan.", Toast.LENGTH_SHORT)
                     .show()
             }
         }
@@ -207,9 +209,41 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                     pendingImport = imported
                 }
             } catch (e: Exception) {
-                Toast.makeText(context, "Gagal mengimpor: ${e.message}", Toast.LENGTH_SHORT)
+                Toast.makeText(context, "File cadangan tidak valid atau rusak.", Toast.LENGTH_SHORT)
                     .show()
             }
+        }
+    }
+
+    fun executeAction(action: PendingAuth) {
+        when (action) {
+            is PendingAuth.Edit -> {
+                editingAccountId = action.accountId
+                screen = Screen.EDIT
+            }
+
+            is PendingAuth.Delete -> {
+                persist(data.withoutAccount(action.accountId))
+                Toast.makeText(context, "Akun dihapus", Toast.LENGTH_SHORT).show()
+            }
+
+            PendingAuth.Export -> {
+                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                exportLauncher.launch("coneckin_backup_$dateStr.json")
+            }
+
+            PendingAuth.ChangePin -> {
+                pinSetupDismissible = true
+                showPinSetup = true
+            }
+        }
+    }
+
+    fun runProtected(action: PendingAuth) {
+        if (hasPin && !sessionVerified) {
+            pendingAuth = action
+        } else {
+            executeAction(action)
         }
     }
 
@@ -370,21 +404,8 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             },
             onLogin = { requestLogin() },
             onSelect = { id -> persist(data.copy(activeAccountId = id)) },
-            onEdit = { id ->
-                if (hasPin) {
-                    pendingAuth = PendingAuth.Edit(id)
-                } else {
-                    editingAccountId = id
-                    screen = Screen.EDIT
-                }
-            },
-            onDelete = { id ->
-                if (hasPin) {
-                    pendingAuth = PendingAuth.Delete(id)
-                } else {
-                    persist(data.withoutAccount(id))
-                }
-            },
+            onEdit = { id -> runProtected(PendingAuth.Edit(id)) },
+            onDelete = { id -> runProtected(PendingAuth.Delete(id)) },
             onAdd = { screen = Screen.ADD },
             onImport = {
                 importLauncher.launch(arrayOf("application/json", "*/*"))
@@ -468,7 +489,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 hasPin = hasPin,
                 onSetupPin = {
                     if (hasPin) {
-                        pendingAuth = PendingAuth.ChangePin
+                        runProtected(PendingAuth.ChangePin)
                     } else {
                         pinSetupDismissible = true
                         showPinSetup = true
@@ -483,11 +504,8 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                     if (data.accounts.isEmpty()) {
                         Toast.makeText(context, "Belum ada akun untuk diekspor", Toast.LENGTH_SHORT)
                             .show()
-                    } else if (hasPin) {
-                        pendingAuth = PendingAuth.Export
                     } else {
-                        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                        exportLauncher.launch("coneckin_backup_$dateStr.json")
+                        runProtected(PendingAuth.Export)
                     }
                 },
                 onImport = {
@@ -573,27 +591,8 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     fun handleAuthSuccess() {
         val action = pendingAuth ?: return
         pendingAuth = null
-        when (action) {
-            is PendingAuth.Edit -> {
-                editingAccountId = action.accountId
-                screen = Screen.EDIT
-            }
-
-            is PendingAuth.Delete -> {
-                persist(data.withoutAccount(action.accountId))
-                Toast.makeText(context, "Akun dihapus", Toast.LENGTH_SHORT).show()
-            }
-
-            PendingAuth.Export -> {
-                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                exportLauncher.launch("coneckin_backup_$dateStr.json")
-            }
-
-            PendingAuth.ChangePin -> {
-                pinSetupDismissible = true
-                showPinSetup = true
-            }
-        }
+        sessionVerified = true
+        executeAction(action)
     }
 
     // Dialog verifikasi PIN / sidik jari
@@ -631,6 +630,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 val isUpdate = hasPin
                 AppPin.setPin(context, pin)
                 hasPin = true
+                sessionVerified = true
                 showPinSetup = false
                 if (!pinSetupDismissible) screen = Screen.HOME
                 Toast.makeText(
@@ -1527,10 +1527,19 @@ fun PinVerifyDialog(
     onDismiss: () -> Unit,
     onBiometric: (() -> Unit)?
 ) {
+    val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    val context = LocalContext.current
+    var lockSeconds by remember { mutableStateOf(AppPin.remainingLockSeconds(context)) }
     val fieldShape = RoundedCornerShape(14.dp)
+
+    LaunchedEffect(lockSeconds) {
+        if (lockSeconds > 0) {
+            delay(1000)
+            lockSeconds = AppPin.remainingLockSeconds(context)
+            if (lockSeconds == 0) error = ""
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1545,13 +1554,19 @@ fun PinVerifyDialog(
                         if (digits.length <= 6) { pin = digits; error = "" }
                     },
                     label = { Text("PIN") },
+                    enabled = lockSeconds == 0,
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     shape = fieldShape,
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (error.isNotEmpty()) {
+                if (lockSeconds > 0) {
+                    Text(
+                        "Terlalu banyak percobaan salah. Coba lagi dalam $lockSeconds detik.",
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else if (error.isNotEmpty()) {
                     Text(error, color = MaterialTheme.colorScheme.error)
                 }
                 if (onBiometric != null) {
@@ -1562,14 +1577,23 @@ fun PinVerifyDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                if (AppPin.verifyPin(context, pin)) {
-                    onSuccess()
-                } else {
-                    error = "PIN salah"
-                    pin = ""
+            TextButton(
+                enabled = lockSeconds == 0,
+                onClick = {
+                    when (val result = AppPin.verifyPin(context, pin)) {
+                        PinCheck.Success -> onSuccess()
+                        PinCheck.WrongPin -> {
+                            error = "PIN salah"
+                            pin = ""
+                        }
+                        is PinCheck.Locked -> {
+                            lockSeconds = result.remainingSeconds
+                            pin = ""
+                            error = ""
+                        }
+                    }
                 }
-            }) { Text("Verifikasi") }
+            ) { Text("Verifikasi") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Batal") }
