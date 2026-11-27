@@ -163,4 +163,74 @@ class AccountOpsTest {
         assertEquals(EditInputCheck.InvalidHost, checkEditAccountInput("n", "u", "p", "a.b, bad host"))
         assertEquals(EditInputCheck.InvalidHost, checkEditAccountInput("n", "u", "p", "   "))
     }
+
+    // ---------- findAccountConflict & mergeImported ----------
+
+    @Test
+    fun findAccountConflict_detectsDuplicateNameCaseInsensitive() {
+        assertEquals(
+            AccountConflict.DuplicateName,
+            base.findAccountConflict(" a ", "u_baru", "p_baru", listOf("host.baru"))
+        )
+    }
+
+    @Test
+    fun findAccountConflict_detectsDuplicateContentWithDifferentName() {
+        assertEquals(
+            AccountConflict.DuplicateContent,
+            base.findAccountConflict("Nama Baru", "ua", "pa", listOf("HTTP://YPBPI.hotspot/login"))
+        )
+    }
+
+    @Test
+    fun findAccountConflict_allowsSameAccountWhenEditingSelf() {
+        assertNull(
+            base.findAccountConflict(
+                name = "A",
+                username = "ua",
+                password = "pa",
+                hosts = listOf("ypbpi.hotspot"),
+                excludeAccountId = "1"
+            )
+        )
+    }
+
+    @Test
+    fun findAccountConflict_blocksEditingToMatchOtherAccount() {
+        assertEquals(
+            AccountConflict.DuplicateName,
+            base.findAccountConflict("b", "ux", "px", listOf("x.y"), excludeAccountId = "1")
+        )
+        assertEquals(
+            AccountConflict.DuplicateContent,
+            base.findAccountConflict("Unik", "ub", "pb", listOf("portal.contoh"), excludeAccountId = "1")
+        )
+    }
+
+    @Test
+    fun findAccountConflict_allowsDifferentPasswordOrDifferentHost() {
+        assertNull(base.findAccountConflict("C", "ua", "pa-beda", listOf("ypbpi.hotspot")))
+        assertNull(base.findAccountConflict("C", "ua", "pa", listOf("kampus.lain")))
+    }
+
+    @Test
+    fun mergeImported_skipsDuplicateNameAndDuplicateContent() {
+        val dupName = Account("x1", "a", "ux", "px")
+        val dupContent = Account("x2", "Lain", "ua", "pa")
+        val valid = Account("x3", "Baru", "uc", "pc")
+        val dupWithinImport = Account("x4", "baru", "ud", "pd")
+        val imported = AppData(
+            accounts = listOf(dupName, dupContent, valid, dupWithinImport),
+            portals = listOf(
+                Portal("lain.host", "x1"),
+                Portal("ypbpi.hotspot", "x2"),
+                Portal("kampus.c", "x3"),
+                Portal("kampus.d", "x4")
+            )
+        )
+        val (merged, added) = base.mergeImported(imported)
+        assertEquals(1, added)
+        assertEquals(3, merged.accounts.size)
+        assertTrue(merged.accounts.any { it.name == "Baru" && it.username == "uc" })
+    }
 }

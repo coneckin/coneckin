@@ -135,38 +135,81 @@ fun checkEditAccountInput(
     return EditInputCheck.Valid(name.trim(), username.trim(), password, hosts)
 }
 
+/** Hasil pemeriksaan duplikasi akun berdasarkan nama maupun isi kredensial. */
+sealed class AccountConflict {
+    data object DuplicateName : AccountConflict()
+    data object DuplicateContent : AccountConflict()
+}
+
+/**
+ * Memeriksa apakah akun baru atau hasil ubahan bentrok dengan akun yang sudah ada.
+ * Bentrok terjadi bila nama akun sama (abaikan huruf besar/kecil) atau bila isi
+ * kredensial dan daftar portalnya sama persis dengan akun lain.
+ */
+fun AppData.findAccountConflict(
+    name: String,
+    username: String,
+    password: String,
+    hosts: List<String>,
+    excludeAccountId: String? = null
+): AccountConflict? {
+    val cleanName = name.trim().lowercase()
+    val cleanUsername = username.trim()
+    val cleanHosts = hosts.mapNotNull { normalizeHost(it) }.toSet()
+
+    for (acc in accounts) {
+        if (acc.id == excludeAccountId) continue
+        if (acc.name.trim().lowercase() == cleanName) {
+            return AccountConflict.DuplicateName
+        }
+        val accHosts = portals.filter { it.accountId == acc.id }
+            .mapNotNull { normalizeHost(it.host) }
+            .toSet()
+        if (acc.username.trim() == cleanUsername &&
+            acc.password == password &&
+            accHosts == cleanHosts
+        ) {
+            return AccountConflict.DuplicateContent
+        }
+    }
+    return null
+}
+
 /**
  * Menggabungkan data yang diimpor ke data yang sudah ada.
  * Akun yang diimpor mendapat ID baru supaya tidak bentrok.
- * Akun yang username-nya sudah ada di portal yang sama akan dilewati.
+ * Akun yang namanya duplikat, isinya sama, atau username-nya sudah ada di portal
+ * yang sama akan dilewati.
  */
 fun AppData.mergeImported(imported: AppData): Pair<AppData, Int> {
-    // Pasangan (username, host) yang sudah ada
-    val existingPairs = mutableSetOf<Pair<String, String>>()
-    for (acc in accounts) {
-        for (p in portals.filter { it.accountId == acc.id }) {
-            existingPairs.add(acc.username to p.host)
-        }
-    }
-
-    val addedAccounts = mutableListOf<Account>()
-    val addedPortals = mutableListOf<Portal>()
+    var current = this
+    var addedCount = 0
 
     for (acc in imported.accounts) {
         val accPortals = imported.portals.filter { it.accountId == acc.id }
-        // Lewati jika semua portal akun ini sudah ada dengan username yang sama
+        val hostList = accPortals.map { it.host }
+
+        if (current.findAccountConflict(acc.name, acc.username, acc.password, hostList) != null) {
+            continue
+        }
+
+        val existingPairs = current.accounts.flatMap { existing ->
+            current.portals.filter { it.accountId == existing.id }
+                .map { existing.username to it.host }
+        }.toSet()
         val allExist = accPortals.isNotEmpty() &&
                 accPortals.all { p -> (acc.username to p.host) in existingPairs }
         if (allExist) continue
 
         val newId = java.util.UUID.randomUUID().toString()
-        addedAccounts.add(acc.copy(id = newId))
-        accPortals.forEach { addedPortals.add(it.copy(accountId = newId)) }
+        val newAcc = acc.copy(id = newId)
+        val newPortals = accPortals.map { it.copy(accountId = newId) }
+        current = current.copy(
+            accounts = current.accounts + newAcc,
+            portals = current.portals + newPortals
+        )
+        addedCount++
     }
 
-    val merged = copy(
-        accounts = accounts + addedAccounts,
-        portals = portals + addedPortals
-    )
-    return merged to addedAccounts.size
+    return current to addedCount
 }

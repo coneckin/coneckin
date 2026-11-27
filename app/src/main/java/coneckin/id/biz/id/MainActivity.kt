@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,9 +21,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -38,7 +41,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -106,6 +108,14 @@ class MainActivity : ComponentActivity() {
 
 enum class Screen { HOME, ADD, EDIT, SETTINGS, MANUAL }
 enum class StatusAction { NONE, PORTAL, WIFI }
+enum class StatusTone { NEUTRAL, SUCCESS, ERROR }
+
+private sealed interface PendingAuth {
+    data class Edit(val accountId: String) : PendingAuth
+    data class Delete(val accountId: String) : PendingAuth
+    data object Export : PendingAuth
+    data object ChangePin : PendingAuth
+}
 
 @Composable
 fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
@@ -121,6 +131,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     var manualHost by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
+    var statusTone by remember { mutableStateOf(StatusTone.NEUTRAL) }
     var statusAction by remember { mutableStateOf(StatusAction.NONE) }
     var failedHost by remember { mutableStateOf<String?>(null) }
     var unknownHost by remember { mutableStateOf<String?>(null) }
@@ -154,8 +165,10 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
 
     // ── Export / Import ──────────────────────────────────────────────
     var pendingImport by remember { mutableStateOf<AppData?>(null) }
-    var pendingAuthAction by remember { mutableStateOf<String?>(null) }
+    var hasPin by remember { mutableStateOf(AppPin.hasPin(context)) }
+    var pendingAuth by remember { mutableStateOf<PendingAuth?>(null) }
     var showPinSetup by remember { mutableStateOf(false) }
+    var pinSetupDismissible by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -204,6 +217,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
         if (busy) return
         busy = true
         status = "Memulai..."
+        statusTone = StatusTone.NEUTRAL
         statusAction = StatusAction.NONE
         failedHost = null
         scope.launch {
@@ -215,6 +229,11 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 LoginResult.Failed("Terjadi kesalahan: ${e.javaClass.simpleName}")
             }
             status = result.toText()
+            statusTone = when (result) {
+                is LoginResult.Success, LoginResult.AlreadyOnline -> StatusTone.SUCCESS
+                is LoginResult.UnknownPortal, is LoginResult.Failed, LoginResult.NoWifi ->
+                    StatusTone.ERROR
+            }
             if (reportEnabled) {
                 Reporter.fromResult(result)?.let { (host, code) ->
                     scope.launch {
@@ -331,6 +350,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             data = data,
             busy = busy,
             status = status,
+            statusTone = statusTone,
             statusAction = statusAction,
             announcement = r?.message.orEmpty(),
             updateText = updateText,
@@ -351,17 +371,24 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
             onLogin = { requestLogin() },
             onSelect = { id -> persist(data.copy(activeAccountId = id)) },
             onEdit = { id ->
-                if (AppPin.hasPin(context)) {
-                    pendingAuthAction = id
+                if (hasPin) {
+                    pendingAuth = PendingAuth.Edit(id)
                 } else {
                     editingAccountId = id
                     screen = Screen.EDIT
                 }
             },
             onDelete = { id ->
-                persist(data.withoutAccount(id))
+                if (hasPin) {
+                    pendingAuth = PendingAuth.Delete(id)
+                } else {
+                    persist(data.withoutAccount(id))
+                }
             },
             onAdd = { screen = Screen.ADD },
+            onImport = {
+                importLauncher.launch(arrayOf("application/json", "*/*"))
+            },
             onSettings = {
                 settingsMessage = ""
                 screen = Screen.SETTINGS
@@ -371,10 +398,12 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
         Screen.ADD -> {
             BackHandler { screen = Screen.HOME }
             AddAccountScreen(
+                existingData = data,
                 directory = directory,
                 onSave = { account, host ->
                     persist(data.withAccount(account, host))
-                    if (!AppPin.hasPin(context)) {
+                    if (!hasPin) {
+                        pinSetupDismissible = false
                         showPinSetup = true
                     } else {
                         screen = Screen.HOME
@@ -397,7 +426,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                 EditAccountScreen(
                     account = target,
                     initialHosts = data.portals.filter { it.accountId == target.id }.map { it.host },
-                    directory = directory,
+                    existingData = data,
                     onSave = { name, username, password, hosts ->
                         data.withUpdatedAccount(target.id, name, username, password, hosts)?.let {
                             persist(it)
@@ -436,6 +465,15 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                     }
                 },
                 onToggleLock = { setLock(it) },
+                hasPin = hasPin,
+                onSetupPin = {
+                    if (hasPin) {
+                        pendingAuth = PendingAuth.ChangePin
+                    } else {
+                        pinSetupDismissible = true
+                        showPinSetup = true
+                    }
+                },
                 onRefresh = { refreshRemote() },
                 onUpdate = { openUpdate() },
                 onWifiSettings = {
@@ -445,8 +483,8 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                     if (data.accounts.isEmpty()) {
                         Toast.makeText(context, "Belum ada akun untuk diekspor", Toast.LENGTH_SHORT)
                             .show()
-                    } else if (AppPin.hasPin(context)) {
-                        pendingAuthAction = "export"
+                    } else if (hasPin) {
+                        pendingAuth = PendingAuth.Export
                     } else {
                         val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                         exportLauncher.launch("coneckin_backup_$dateStr.json")
@@ -519,6 +557,10 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                         "$addedCount akun baru ditambahkan",
                         Toast.LENGTH_SHORT
                     ).show()
+                    if (addedCount > 0 && !hasPin) {
+                        pinSetupDismissible = false
+                        showPinSetup = true
+                    }
                 }) { Text("Impor") }
             },
             dismissButton = {
@@ -529,28 +571,47 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
 
     // Fungsi setelah verifikasi berhasil
     fun handleAuthSuccess() {
-        val action = pendingAuthAction ?: return
-        pendingAuthAction = null
-        if (action == "export") {
-            val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-            exportLauncher.launch("coneckin_backup_$dateStr.json")
-        } else {
-            editingAccountId = action
-            screen = Screen.EDIT
+        val action = pendingAuth ?: return
+        pendingAuth = null
+        when (action) {
+            is PendingAuth.Edit -> {
+                editingAccountId = action.accountId
+                screen = Screen.EDIT
+            }
+
+            is PendingAuth.Delete -> {
+                persist(data.withoutAccount(action.accountId))
+                Toast.makeText(context, "Akun dihapus", Toast.LENGTH_SHORT).show()
+            }
+
+            PendingAuth.Export -> {
+                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                exportLauncher.launch("coneckin_backup_$dateStr.json")
+            }
+
+            PendingAuth.ChangePin -> {
+                pinSetupDismissible = true
+                showPinSetup = true
+            }
         }
     }
 
     // Dialog verifikasi PIN / sidik jari
-    if (pendingAuthAction != null) {
+    pendingAuth?.let { action ->
+        val authTitle = when (action) {
+            PendingAuth.Export -> "Verifikasi untuk mengekspor akun"
+            is PendingAuth.Delete -> "Verifikasi untuk menghapus akun"
+            PendingAuth.ChangePin -> "Verifikasi untuk mengubah PIN"
+            is PendingAuth.Edit -> "Verifikasi untuk mengubah akun"
+        }
         PinVerifyDialog(
             onSuccess = { handleAuthSuccess() },
-            onDismiss = { pendingAuthAction = null },
+            onDismiss = { pendingAuth = null },
             onBiometric = if (AppLock.isDeviceSecure(context)) {
                 {
                     AppLock.authenticate(
                         context = context,
-                        title = if (pendingAuthAction == "export") "Verifikasi untuk mengekspor akun"
-                        else "Verifikasi untuk mengubah akun",
+                        title = authTitle,
                         onSuccess = { handleAuthSuccess() },
                         onFailure = { msg ->
                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -561,14 +622,22 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
         )
     }
 
-    // Dialog buat PIN keamanan (muncul setelah pembuatan akun pertama)
+    // Dialog buat / ubah PIN keamanan
     if (showPinSetup) {
         PinSetupDialog(
+            canDismiss = pinSetupDismissible,
+            onDismiss = { showPinSetup = false },
             onDone = { pin ->
+                val isUpdate = hasPin
                 AppPin.setPin(context, pin)
+                hasPin = true
                 showPinSetup = false
-                screen = Screen.HOME
-                Toast.makeText(context, "PIN keamanan berhasil dibuat", Toast.LENGTH_SHORT).show()
+                if (!pinSetupDismissible) screen = Screen.HOME
+                Toast.makeText(
+                    context,
+                    if (isUpdate) "PIN keamanan diperbarui" else "PIN keamanan berhasil dibuat",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         )
     }
@@ -604,6 +673,7 @@ fun HomeScreen(
     data: AppData,
     busy: Boolean,
     status: String,
+    statusTone: StatusTone,
     statusAction: StatusAction,
     announcement: String,
     updateText: String?,
@@ -614,6 +684,7 @@ fun HomeScreen(
     onEdit: (String) -> Unit,
     onDelete: (String) -> Unit,
     onAdd: () -> Unit,
+    onImport: () -> Unit,
     onSettings: () -> Unit
 ) {
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
@@ -644,13 +715,13 @@ fun HomeScreen(
             }
 
             if (active == null) {
-                item { EmptyState(onAdd) }
+                item { EmptyState(onAdd = onAdd, onImport = onImport) }
             } else {
                 item { LoginSection(active, busy, onLogin) }
             }
 
             if (busy || status.isNotEmpty()) {
-                item { StatusPanel(busy, status, statusAction, onStatusAction) }
+                item { StatusPanel(busy, status, statusTone, statusAction, onStatusAction) }
             }
 
             if (data.accounts.isNotEmpty()) {
@@ -662,7 +733,7 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "Akun",
+                            "Akun tersimpan",
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f)
                         )
@@ -672,7 +743,6 @@ fun HomeScreen(
                 items(data.accounts, key = { it.id }) { account ->
                     AccountItem(
                         account = account,
-                        hosts = data.portals.filter { it.accountId == account.id }.map { it.host },
                         selected = account.id == active?.id,
                         enabled = !busy,
                         onSelect = { onSelect(account.id) },
@@ -737,12 +807,25 @@ private fun LoginSection(active: Account, busy: Boolean, onLogin: () -> Unit) {
 private fun StatusPanel(
     busy: Boolean,
     status: String,
+    tone: StatusTone,
     action: StatusAction,
     onAction: () -> Unit
 ) {
+    val bgColor = when {
+        busy -> MaterialTheme.colorScheme.surfaceVariant
+        tone == StatusTone.ERROR -> MaterialTheme.colorScheme.errorContainer
+        tone == StatusTone.SUCCESS -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val contentColor = when {
+        busy -> MaterialTheme.colorScheme.onSurfaceVariant
+        tone == StatusTone.ERROR -> MaterialTheme.colorScheme.onErrorContainer
+        tone == StatusTone.SUCCESS -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = bgColor,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(16.dp)) {
@@ -750,7 +833,7 @@ private fun StatusPanel(
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(12.dp))
             }
-            Text(status, style = MaterialTheme.typography.bodyMedium)
+            Text(status, style = MaterialTheme.typography.bodyMedium, color = contentColor)
             if (!busy) {
                 when (action) {
                     StatusAction.PORTAL ->
@@ -767,30 +850,50 @@ private fun StatusPanel(
 }
 
 @Composable
-private fun EmptyState(onAdd: () -> Unit) {
+private fun EmptyState(onAdd: () -> Unit, onImport: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 64.dp),
+            .padding(top = 56.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.size(64.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_tile_wifi),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
         Text("Belum ada akun", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Simpan username dan password WiFi kampus sekali, lalu login dengan satu ketukan.",
+            "Simpan akun WiFi kampus sekali, lalu login kapan saja dengan satu ketukan.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onAdd, shape = RoundedCornerShape(14.dp)) { Text("Tambah akun") }
+        Button(
+            onClick = onAdd,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.height(48.dp)
+        ) { Text("Tambah akun") }
+        Spacer(Modifier.height(4.dp))
+        TextButton(onClick = onImport) { Text("Impor dari cadangan") }
     }
 }
 
 @Composable
 private fun AccountItem(
     account: Account,
-    hosts: List<String>,
     selected: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
@@ -809,7 +912,7 @@ private fun AccountItem(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RadioButton(selected = selected, onClick = onSelect, enabled = enabled)
@@ -818,11 +921,6 @@ private fun AccountItem(
                 Text(
                     account.username,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    hosts.joinToString(", "),
-                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -843,6 +941,7 @@ fun SettingsScreen(
     onToggleReport: (Boolean) -> Unit,
     onTestReport: () -> Unit,
     lockEnabled: Boolean,
+    hasPin: Boolean,
     message: String,
     appVersion: String,
     latestVersion: String?,
@@ -850,6 +949,7 @@ fun SettingsScreen(
     refreshing: Boolean,
     refreshNote: String,
     onToggleLock: (Boolean) -> Unit,
+    onSetupPin: () -> Unit,
     onRefresh: () -> Unit,
     onUpdate: () -> Unit,
     onWifiSettings: () -> Unit,
@@ -901,6 +1001,32 @@ fun SettingsScreen(
                         )
                     }
                     Switch(checked = lockEnabled, onCheckedChange = onToggleLock)
+                }
+            }
+
+            OutlinedCard(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "PIN keamanan",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            "Melindungi ubah, hapus, dan ekspor akun.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onSetupPin) {
+                        Text(if (hasPin) "Ubah PIN" else "Buat PIN")
+                    }
                 }
             }
 
@@ -1061,6 +1187,7 @@ fun SettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAccountScreen(
+    existingData: AppData,
     directory: List<DirectoryPortal>,
     onSave: (Account, String) -> Unit,
     onBack: () -> Unit
@@ -1070,18 +1197,20 @@ fun AddAccountScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var host by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldShape = RoundedCornerShape(14.dp)
 
-    // Jika hanya ada satu kampus, langsung terpilih
+    // Jika hanya ada satu kampus, langsung terisi otomatis
     LaunchedEffect(directory) {
         if (host.isEmpty() && directory.size == 1) {
             host = directory[0].host
-            if (name.isBlank()) name = directory[0].name
+            val defaultName = directory[0].name
+            val nameTaken = existingData.accounts.any {
+                it.name.trim().equals(defaultName.trim(), ignoreCase = true)
+            }
+            if (name.isBlank() && !nameTaken) name = defaultName
         }
     }
-    val selected = directory.firstOrNull { it.host == normalizeHost(host) }
 
     Scaffold(
         topBar = {
@@ -1102,21 +1231,12 @@ fun AddAccountScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedButton(
-                onClick = { showPicker = true },
-                shape = fieldShape,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-            ) {
-                Text(selected?.name ?: "Pilih kampus")
-            }
             OutlinedTextField(
                 value = host,
                 onValueChange = { host = it },
-                label = { Text("Alamat portal") },
+                label = { Text("Alamat login WiFi") },
                 supportingText = {
-                    Text("Terisi otomatis saat memilih kampus. Isi manual untuk jaringan lain.")
+                    Text("Terisi otomatis untuk WiFi kampus, bisa diubah manual.")
                 },
                 singleLine = true,
                 shape = fieldShape,
@@ -1126,7 +1246,7 @@ fun AddAccountScreen(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text("Nama akun") },
-                supportingText = { Text("Nama bebas untuk membedakan akun") },
+                supportingText = { Text("Contoh: WiFi Kampus") },
                 singleLine = true,
                 shape = fieldShape,
                 modifier = Modifier.fillMaxWidth()
@@ -1168,17 +1288,29 @@ fun AddAccountScreen(
                             error = "Nama, username, dan password wajib diisi."
 
                         InputCheck.InvalidHost ->
-                            error = "Pilih kampus atau isi alamat portal yang valid."
+                            error = "Isi alamat login WiFi yang valid."
 
-                        is InputCheck.Valid -> onSave(
-                            Account(
-                                id = UUID.randomUUID().toString(),
+                        is InputCheck.Valid -> {
+                            val conflict = existingData.findAccountConflict(
                                 name = check.name,
                                 username = check.username,
-                                password = check.password
-                            ),
-                            check.host
-                        )
+                                password = check.password,
+                                hosts = listOf(check.host)
+                            )
+                            if (conflict != null) {
+                                error = conflict.toErrorMessage()
+                            } else {
+                                onSave(
+                                    Account(
+                                        id = UUID.randomUUID().toString(),
+                                        name = check.name,
+                                        username = check.username,
+                                        password = check.password
+                                    ),
+                                    check.host
+                                )
+                            }
+                        }
                     }
                 },
                 shape = RoundedCornerShape(16.dp),
@@ -1190,40 +1322,6 @@ fun AddAccountScreen(
             Spacer(Modifier.height(16.dp))
         }
     }
-
-    if (showPicker) {
-        AlertDialog(
-            onDismissRequest = { showPicker = false },
-            title = { Text("Pilih kampus") },
-            text = {
-                LazyColumn {
-                    items(directory, key = { it.host }) { portal ->
-                        TextButton(
-                            onClick = {
-                                host = portal.host
-                                if (name.isBlank()) name = portal.name
-                                showPicker = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.fillMaxWidth()) {
-                                Text(portal.name)
-                                Text(
-                                    portal.host,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showPicker = false }) { Text("Tutup") }
-            }
-        )
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1231,7 +1329,7 @@ fun AddAccountScreen(
 fun EditAccountScreen(
     account: Account,
     initialHosts: List<String>,
-    directory: List<DirectoryPortal>,
+    existingData: AppData,
     onSave: (name: String, username: String, password: String, hosts: List<String>) -> Unit,
     onBack: () -> Unit
 ) {
@@ -1242,12 +1340,8 @@ fun EditAccountScreen(
         mutableStateOf(initialHosts.joinToString(", "))
     }
     var showPassword by rememberSaveable(account.id) { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val fieldShape = RoundedCornerShape(14.dp)
-
-    val parsedHosts = parseHostList(hostsText).orEmpty()
-    val selected = directory.firstOrNull { it.host in parsedHosts }
 
     Scaffold(
         topBar = {
@@ -1268,21 +1362,12 @@ fun EditAccountScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedButton(
-                onClick = { showPicker = true },
-                shape = fieldShape,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-            ) {
-                Text(selected?.name ?: "Pilih kampus")
-            }
             OutlinedTextField(
                 value = hostsText,
                 onValueChange = { hostsText = it },
-                label = { Text("Alamat portal") },
+                label = { Text("Alamat login WiFi") },
                 supportingText = {
-                    Text("Pisahkan dengan koma jika akun ini dipakai di lebih dari satu portal.")
+                    Text("Pisahkan dengan koma jika dipakai di lebih dari satu jaringan.")
                 },
                 singleLine = true,
                 shape = fieldShape,
@@ -1336,12 +1421,25 @@ fun EditAccountScreen(
                         EditInputCheck.InvalidHost ->
                             error = "Isi minimal satu alamat portal yang valid."
 
-                        is EditInputCheck.Valid -> onSave(
-                            check.name,
-                            check.username,
-                            check.password,
-                            check.hosts
-                        )
+                        is EditInputCheck.Valid -> {
+                            val conflict = existingData.findAccountConflict(
+                                name = check.name,
+                                username = check.username,
+                                password = check.password,
+                                hosts = check.hosts,
+                                excludeAccountId = account.id
+                            )
+                            if (conflict != null) {
+                                error = conflict.toErrorMessage()
+                            } else {
+                                onSave(
+                                    check.name,
+                                    check.username,
+                                    check.password,
+                                    check.hosts
+                                )
+                            }
+                        }
                     }
                 },
                 shape = RoundedCornerShape(16.dp),
@@ -1353,63 +1451,27 @@ fun EditAccountScreen(
             Spacer(Modifier.height(16.dp))
         }
     }
-
-    if (showPicker) {
-        AlertDialog(
-            onDismissRequest = { showPicker = false },
-            title = { Text("Pilih kampus") },
-            text = {
-                LazyColumn {
-                    items(directory, key = { it.host }) { portal ->
-                        TextButton(
-                            onClick = {
-                                val current = parseHostList(hostsText).orEmpty()
-                                hostsText = if (current.size <= 1) {
-                                    portal.host
-                                } else {
-                                    (current + portal.host).distinct().joinToString(", ")
-                                }
-                                showPicker = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(Modifier.fillMaxWidth()) {
-                                Text(portal.name)
-                                Text(
-                                    portal.host,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { showPicker = false }) { Text("Tutup") }
-            }
-        )
-    }
 }
 
 
 @Composable
-fun PinSetupDialog(onDone: (String) -> Unit) {
+fun PinSetupDialog(
+    canDismiss: Boolean = false,
+    onDismiss: () -> Unit = {},
+    onDone: (String) -> Unit
+) {
     var pin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     val fieldShape = RoundedCornerShape(14.dp)
 
     AlertDialog(
-        onDismissRequest = {},
-        title = { Text("Buat PIN Keamanan") },
+        onDismissRequest = { if (canDismiss) onDismiss() },
+        title = { Text("PIN Keamanan") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "PIN ini akan melindungi akun Anda dari penyalahgunaan " +
-                            "saat perangkat dipinjam. PIN diperlukan untuk mengubah " +
-                            "atau mengekspor akun."
+                    "Gunakan PIN 4–6 digit untuk melindungi perubahan, penghapusan, dan ekspor akun."
                 )
                 OutlinedTextField(
                     value = pin,
@@ -1451,7 +1513,11 @@ fun PinSetupDialog(onDone: (String) -> Unit) {
                 }
             }) { Text("Simpan") }
         },
-        dismissButton = {}
+        dismissButton = {
+            if (canDismiss) {
+                TextButton(onClick = onDismiss) { Text("Batal") }
+            }
+        }
     )
 }
 
@@ -1522,4 +1588,9 @@ private fun PasswordToggleButton(visible: Boolean, onToggle: () -> Unit) {
             contentDescription = if (visible) "Sembunyikan password" else "Tampilkan password"
         )
     }
+}
+
+private fun AccountConflict.toErrorMessage(): String = when (this) {
+    AccountConflict.DuplicateName -> "Nama akun sudah digunakan, pilih nama lain."
+    AccountConflict.DuplicateContent -> "Akun dengan isi yang sama sudah ada."
 }
