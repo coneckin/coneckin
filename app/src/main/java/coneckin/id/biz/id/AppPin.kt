@@ -23,7 +23,7 @@ class PinManager(
     private val storage: KeyValueStore,
     private val nowMs: () -> Long = { System.currentTimeMillis() }
 ) {
-    fun hasPin(): Boolean = storage.getString(KEY_PIN_HASH) != null
+    fun hasPin(): Boolean = !storage.getString(KEY_PIN_HASH).isNullOrEmpty()
 
     fun setPin(pin: String) {
         val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
@@ -41,6 +41,11 @@ class PinManager(
         clearAttempts()
     }
 
+    fun clearPin() {
+        storage.putString(KEY_PIN_HASH, "")
+        clearAttempts()
+    }
+
     fun remainingLockSeconds(): Int {
         val lockUntil = storage.getString(KEY_LOCK_UNTIL)?.toLongOrNull() ?: return 0
         val diff = lockUntil - nowMs()
@@ -52,7 +57,8 @@ class PinManager(
         val lockedFor = remainingLockSeconds()
         if (lockedFor > 0) return PinCheck.Locked(lockedFor)
 
-        val stored = storage.getString(KEY_PIN_HASH) ?: return PinCheck.WrongPin
+        val stored = storage.getString(KEY_PIN_HASH)
+        if (stored.isNullOrEmpty()) return PinCheck.WrongPin
         val matched = if (stored.startsWith("$PREFIX:")) {
             verifyPbkdf2(pin, stored)
         } else {
@@ -135,6 +141,8 @@ object AppPin {
     fun hasPin(context: Context): Boolean = manager(context).hasPin()
 
     fun setPin(context: Context, pin: String) = manager(context).setPin(pin)
+
+    fun clearPin(context: Context) = manager(context).clearPin()
 
     fun verifyPin(context: Context, pin: String): PinCheck = manager(context).verifyPin(pin)
 

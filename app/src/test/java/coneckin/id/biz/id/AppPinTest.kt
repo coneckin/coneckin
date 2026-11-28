@@ -104,4 +104,18 @@ class AppPinTest {
         repeat(4) { assertEquals(PinCheck.WrongPin, manager.verifyPin("0000")) }
         assertEquals(PinCheck.Locked(30), manager.verifyPin("0000"))
     }
+
+    @Test
+    fun clearPin_removesPinAndClearsLockoutState() {
+        val store = FakePinStore()
+        val manager = PinManager(store) { 1_000_000L }
+        manager.setPin("1234")
+        repeat(5) { manager.verifyPin("9999") }
+        assertEquals(30, manager.remainingLockSeconds())
+
+        manager.clearPin()
+        assertFalse(manager.hasPin())
+        assertEquals(0, manager.remainingLockSeconds())
+        assertEquals(PinCheck.WrongPin, manager.verifyPin("1234"))
+    }
 }

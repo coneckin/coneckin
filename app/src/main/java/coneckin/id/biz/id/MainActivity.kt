@@ -171,6 +171,7 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
     var pendingAuth by remember { mutableStateOf<PendingAuth?>(null) }
     var showPinSetup by remember { mutableStateOf(false) }
     var pinSetupDismissible by remember { mutableStateOf(false) }
+    var showForgotPinConfirm by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -617,7 +618,55 @@ fun ConeckinApp(autoLogin: Boolean, onAutoLoginHandled: () -> Unit) {
                         }
                     )
                 }
-            } else null
+            } else null,
+            onForgotPin = {
+                if (AppLock.isDeviceSecure(context)) {
+                    AppLock.authenticate(
+                        context = context,
+                        title = "Verifikasi untuk mengatur ulang PIN",
+                        onSuccess = {
+                            pendingAuth = null
+                            pinSetupDismissible = true
+                            showPinSetup = true
+                        },
+                        onFailure = { msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                } else {
+                    pendingAuth = null
+                    showForgotPinConfirm = true
+                }
+            }
+        )
+    }
+
+    // Konfirmasi reset data jika lupa PIN pada perangkat tanpa kunci layar
+    if (showForgotPinConfirm) {
+        AlertDialog(
+            onDismissRequest = { showForgotPinConfirm = false },
+            title = { Text("Reset PIN dan hapus akun?") },
+            text = {
+                Text(
+                    "HP ini tidak memiliki kunci layar. Demi melindungi password WiFi Anda, " +
+                            "mengatur ulang PIN akan menghapus semua akun tersimpan dari aplikasi."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    persist(AppData())
+                    AppPin.clearPin(context)
+                    hasPin = false
+                    sessionVerified = false
+                    showForgotPinConfirm = false
+                    screen = Screen.HOME
+                    Toast.makeText(context, "Semua akun dan PIN telah dihapus", Toast.LENGTH_SHORT)
+                        .show()
+                }) { Text("Hapus & Reset", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForgotPinConfirm = false }) { Text("Batal") }
+            }
         )
     }
 
@@ -1525,7 +1574,8 @@ fun PinSetupDialog(
 fun PinVerifyDialog(
     onSuccess: () -> Unit,
     onDismiss: () -> Unit,
-    onBiometric: (() -> Unit)?
+    onBiometric: (() -> Unit)?,
+    onForgotPin: () -> Unit
 ) {
     val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
@@ -1571,8 +1621,11 @@ fun PinVerifyDialog(
                 }
                 if (onBiometric != null) {
                     TextButton(onClick = onBiometric) {
-                        Text("Gunakan sidik jari")
+                        Text("Gunakan kunci layar / sidik jari")
                     }
+                }
+                TextButton(onClick = onForgotPin) {
+                    Text("Lupa PIN?")
                 }
             }
         },
